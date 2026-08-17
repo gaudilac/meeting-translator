@@ -1,0 +1,11 @@
+.DS_Store
+Thumbs.db
+*.log
+.vscode/
+.idea/
+
+# Không bao giờ commit key hay token
+.env
+.env.*
+*.key
+secrets.*

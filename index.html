@@ -1,0 +1,132 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="light dark">
+<title>Phiên dịch hội thoại — Anh sang Việt</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<header class="bar">
+  <div class="brand">
+    <span class="dot" id="statusDot"></span>
+    <strong>Phiên dịch hội thoại</strong>
+  </div>
+  <div class="bar-actions">
+    <span class="usage" id="usage" hidden>0 lượt</span>
+    <button type="button" class="icon-btn" id="btnSettings" aria-label="Cài đặt">⚙</button>
+  </div>
+</header>
+
+<main>
+  <section class="controls" id="controls">
+    <button type="button" class="primary" id="btnMic">
+      <span class="ico">🎙</span>
+      <span class="lbl">Nghe từ micro</span>
+    </button>
+    <button type="button" class="primary" id="btnTab">
+      <span class="ico">🖥</span>
+      <span class="lbl">Nghe từ tab họp</span>
+    </button>
+    <button type="button" class="danger" id="btnStop" hidden>
+      <span class="ico">■</span>
+      <span class="lbl">Dừng</span>
+    </button>
+  </section>
+
+  <p class="hint" id="hint">Chọn nguồn âm thanh để bắt đầu. Bản dịch tiếng Việt sẽ hiện ngay bên dưới.</p>
+
+  <div class="notice" id="notice" hidden>
+    <span id="noticeText"></span>
+    <button type="button" class="link" id="noticeAction" hidden></button>
+  </div>
+
+  <section class="transcript" id="transcript" aria-live="polite">
+    <div class="empty" id="empty">
+      <p>Chưa có nội dung nào.</p>
+      <p class="sub">Nội dung nghe được sẽ được gửi tới Google Gemini để dịch.</p>
+    </div>
+  </section>
+
+  <div class="live" id="live" hidden></div>
+</main>
+
+<footer class="toolbar">
+  <button type="button" class="tool" id="btnScroll" aria-pressed="true">↓ Tự cuộn</button>
+  <button type="button" class="tool" id="btnSource" aria-pressed="true">Hiện tiếng Anh</button>
+  <button type="button" class="tool" id="btnFont">Cỡ chữ: Vừa</button>
+  <button type="button" class="tool" id="btnExport">Tải transcript</button>
+  <button type="button" class="tool" id="btnClear">Xoá</button>
+</footer>
+
+<!-- ---------------------------------------------------------------- cài đặt -->
+<dialog id="settings">
+  <form method="dialog" class="sheet">
+    <header class="sheet-head">
+      <h2>Kết nối Apps Script</h2>
+      <button type="submit" class="icon-btn" aria-label="Đóng">✕</button>
+    </header>
+
+    <div class="sheet-body">
+      <p class="lede">
+        API key Gemini nằm trong Apps Script thuộc tài khoản Google của bạn.
+        Trang web này không nhận, không lưu và không gửi key đi đâu.
+      </p>
+
+      <ol class="steps">
+        <li>
+          Lấy Gemini API key tại
+          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
+        </li>
+        <li>
+          Tạo script mới tại
+          <a href="https://script.new" target="_blank" rel="noopener">script.new</a>
+        </li>
+        <li>
+          Dán toàn bộ nội dung file <code>gas/Code.gs</code> vào editor
+          <button type="button" class="link" id="btnCopyCode">Sao chép Code.gs</button>
+        </li>
+        <li>Dán key vào hàm <code>setup()</code> ở đầu file rồi bấm <strong>Run</strong></li>
+        <li>
+          <strong>Deploy → New deployment → Web app</strong><br>
+          Execute as: <code>Me</code> · Who has access: <code>Anyone</code>
+        </li>
+        <li>Chạy <code>showSetup()</code> rồi copy URL và token vào ô dưới đây</li>
+      </ol>
+
+      <label class="field">
+        <span>URL Web App</span>
+        <input type="url" id="inpUrl" placeholder="https://script.google.com/macros/s/.../exec" autocomplete="off" spellcheck="false">
+      </label>
+
+      <label class="field">
+        <span>Token</span>
+        <input type="password" id="inpToken" placeholder="Dán token từ showSetup()" autocomplete="off" spellcheck="false">
+      </label>
+
+      <div class="test-row">
+        <button type="button" class="primary sm" id="btnTest">Kiểm tra kết nối</button>
+        <span class="test-result" id="testResult"></span>
+      </div>
+
+      <details class="warn">
+        <summary>Cần biết trước khi dùng</summary>
+        <ul>
+          <li><strong>Nội dung cuộc họp được gửi tới Google Gemini</strong> để nhận dạng và dịch. Không dùng cho họp có thông tin mật.</li>
+          <li>Token lưu trong bộ nhớ trình duyệt. Người dùng chung máy có thể đọc được. Nghi ngờ lộ thì chạy <code>rotateToken()</code>.</li>
+          <li>Mỗi câu là một lời gọi API và phát sinh chi phí theo biểu giá Gemini. Nên đặt hạn mức chi tiêu trong Google Cloud Console.</li>
+          <li>Gói miễn phí giới hạn theo phút — họp dài liên tục có thể bị tạm dừng.</li>
+          <li>Chia sẻ âm thanh tab chỉ chạy trên Chrome/Edge máy tính, không chạy trên điện thoại.</li>
+        </ul>
+      </details>
+
+      <button type="button" class="link danger-link" id="btnForget">Xoá kết nối khỏi máy này</button>
+    </div>
+  </form>
+</dialog>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>
