@@ -11,7 +11,18 @@
  * API key nằm trong UserProperties của tài khoản này và không rời khỏi đây.
  */
 
-var MODEL_DEFAULT = 'gemini-2.0-flash';
+var MODEL_DEFAULT = 'gemini-3.7-flash';
+
+// Model dự phòng khi model chính trả 503 (Google quá tải) hoặc 404.
+// Xếp theo thứ tự ưu tiên cho dịch hội thoại: nhanh, rẻ, chất lượng đủ tốt.
+var MODEL_FALLBACKS = [
+  'gemini-3.7-flash',
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-flash-latest',
+  'gemini-3.5-flash-lite',
+  'gemini-3.1-flash-lite'
+];
 var LIMIT_PER_MIN_DEFAULT = 60;
 var LIMIT_PER_DAY_DEFAULT = 1000;
 var MAX_TEXT_CHARS = 8000;
@@ -47,15 +58,17 @@ function setKey(apiKey) {
 
   if (!key || key === 'DÁN_API_KEY_VÀO_ĐÂY') {
     throw new Error(
-      'Bạn chưa thay chỗ giữ chỗ bằng key thật.\n' +
-      'Sửa dòng setKey(\'DÁN_API_KEY_VÀO_ĐÂY\') trong hàm setup(), dán key của bạn vào giữa hai dấu nháy rồi Run lại.\n' +
+      'Dòng setKey() vẫn đang là chỗ giữ chỗ, chưa phải key thật.\n\n' +
+      'Nếu bạn ĐÃ dán key mà vẫn thấy lỗi này, gần như chắc chắn là editor chưa lưu:\n' +
+      '  1. Bấm Ctrl+S (hoặc Cmd+S) để lưu file\n' +
+      '  2. Tải lại trang bằng F5 rồi Run lại\n\n' +
       'Lấy key tại: https://aistudio.google.com/apikey'
     );
   }
 
-  // Không chặn theo tiền tố: key Gemini thường bắt đầu bằng "AIza" nhưng
-  // không phải dạng nào cũng vậy. Chỉ loại các trường hợp chắc chắn sai,
-  // rồi để verifyKey_() hỏi thẳng Google xem key có dùng được không.
+  // Không chặn theo tiền tố. Key AI Studio có nhiều dạng ("AIza...", "AQ.Ab8...")
+  // và Google vẫn đang thêm dạng mới, nên đoán theo tiền tố sẽ từ chối oan key thật.
+  // Chỉ loại trường hợp chắc chắn sai rồi để verifyKey_() hỏi thẳng Google.
   if (key.length < 20 || /\s/.test(key)) {
     throw new Error(
       'Key trông không đúng định dạng (quá ngắn hoặc có khoảng trắng).\n' +
@@ -66,9 +79,49 @@ function setKey(apiKey) {
   var check = verifyKey_(key);
   if (!check.ok) throw new Error(check.message);
 
-  PropertiesService.getUserProperties().setProperty(P_KEY, key);
+  var props = PropertiesService.getUserProperties();
+  props.setProperty(P_KEY, key);
   ensureToken_();
-  Logger.log('Đã lưu API key và xác nhận Google chấp nhận key này.');
+
+  // Danh sách model theo key thay đổi theo thời gian và theo từng tài khoản.
+  // Chốt ngay một model dùng được, thay vì để người dùng phát hiện lúc đang họp.
+  var chosen = pickModel_(check.models, props.getProperty(P_MODEL)) || MODEL_DEFAULT;
+  props.setProperty(P_MODEL, chosen);
+
+  Logger.log(
+    check.degraded
+      ? 'Đã lưu API key. Google đang quá tải nên chưa xác nhận được danh sách model;\n' +
+        'tạm dùng ' + chosen + '. Script sẽ tự chọn lại model khi Google phản hồi bình thường.'
+      : 'Đã lưu API key và xác nhận Google chấp nhận key này.\n' +
+        'Model dùng để dịch: ' + chosen + '\n' +
+        'Nếu model này quá tải lúc đang dùng, script tự chuyển sang model khác.'
+  );
+}
+
+/** Chọn model tốt nhất trong số model mà key thực sự dùng được. */
+function pickModel_(available, current) {
+  if (!available || !available.length) return null;
+
+  // Giữ nguyên lựa chọn cũ nếu vẫn còn dùng được.
+  if (current && available.indexOf(current) >= 0) return current;
+
+  // Ưu tiên bản flash (nhanh, rẻ, đủ tốt cho dịch hội thoại).
+  for (var i = 0; i < MODEL_FALLBACKS.length; i++) {
+    if (available.indexOf(MODEL_FALLBACKS[i]) >= 0) return MODEL_FALLBACKS[i];
+  }
+
+  // Không nhận model sinh ảnh/giọng nói, và bỏ thế hệ gemini-2.x vì Google
+  // đã ngừng cấp cho key mới ("no longer available to new users") dù vẫn
+  // liệt kê chúng trong listModels.
+  var flash = available.filter(function (m) {
+    return m.indexOf('flash') >= 0 &&
+      m.indexOf('tts') < 0 &&
+      m.indexOf('image') < 0 &&
+      m.indexOf('gemini-2') !== 0;
+  });
+  if (flash.length) return flash[0];
+
+  return null;
 }
 
 /** Hỏi Google xem key có thật sự dùng được không — chắc chắn hơn đoán theo tiền tố. */
@@ -84,7 +137,21 @@ function verifyKey_(key) {
   }
 
   var code = resp.getResponseCode();
-  if (code === 200) return { ok: true };
+  if (code === 200) {
+    var models = [];
+    try {
+      models = (JSON.parse(resp.getContentText()).models || [])
+        .filter(function (m) {
+          return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0;
+        })
+        .map(function (m) {
+          return String(m.name).replace('models/', '');
+        });
+    } catch (e) {
+      // Key vẫn hợp lệ dù không đọc được danh sách; giữ model đang đặt.
+    }
+    return { ok: true, models: models };
+  }
 
   if (code === 400 || code === 401 || code === 403) {
     return {
@@ -94,6 +161,12 @@ function verifyKey_(key) {
         'Kiểm tra: key đã copy đủ chưa, còn hiệu lực không, và đã bật Generative Language API cho project chưa.\n' +
         'Tạo key mới tại: https://aistudio.google.com/apikey'
     };
+  }
+
+  // 503/500 là sự cố tạm thời phía Google, không phải key sai — vẫn cho lưu
+  // để người dùng không bị chặn ở bước cài đặt chỉ vì Google đang nghẽn.
+  if (code === 503 || code === 500) {
+    return { ok: true, models: [], degraded: true };
   }
 
   return {
@@ -233,7 +306,7 @@ function translate_(req, apiKey, props) {
     generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
   };
 
-  var res = callGemini_(model, apiKey, payload);
+  var res = callGemini_(model, apiKey, payload, props);
   if (res.error) return res.error;
 
   return ok_({
@@ -265,7 +338,7 @@ function transcribe_(req, apiKey, props) {
     generationConfig: { temperature: 0.3, maxOutputTokens: 2048 }
   };
 
-  var res = callGemini_(model, apiKey, payload);
+  var res = callGemini_(model, apiKey, payload, props);
   if (res.error) return res.error;
 
   var parsed = splitTranscript_(res.text);
@@ -297,15 +370,69 @@ function listModels_(apiKey) {
 
 // ---------------------------------------------------------------- Gemini
 
-function callGemini_(model, apiKey, payload) {
+/**
+ * Gọi Gemini, tự chuyển sang model khác khi model chính không dùng được.
+ *
+ * Cần thiết vì hai lý do gặp thật khi chạy:
+ *  - 503 "experiencing high demand" xảy ra thường xuyên và xen kẽ ngẫu nhiên
+ *    với 200, ngay cả khi key hoàn toàn hợp lệ.
+ *  - 404 "no longer available to new users" với các model thế hệ cũ, dù
+ *    listModels vẫn liệt kê chúng.
+ */
+function callGemini_(model, apiKey, payload, props) {
+  var tried = {};
+  var candidates = [model];
+  for (var i = 0; i < MODEL_FALLBACKS.length; i++) candidates.push(MODEL_FALLBACKS[i]);
+
+  var lastError = null;
+
+  // Vòng 1: thử lần lượt từng model.
+  // Vòng 2: chờ rồi thử lại từ đầu — 503 "high demand" thường tự hết sau
+  // vài giây, và khi Google nghẽn diện rộng thì đổi model cũng không cứu được.
+  for (var round = 0; round < 2; round++) {
+    if (round > 0) Utilities.sleep(4000);
+    tried = {};
+
+    for (var j = 0; j < candidates.length; j++) {
+      var m = candidates[j];
+      if (!m || tried[m]) continue;
+      tried[m] = true;
+
+      var res = callOneModel_(m, apiKey, payload);
+
+      if (res.retryOther) {
+        lastError = res.error;
+        continue;
+      }
+
+      // Model dự phòng chạy được thì ghi nhớ để lần sau khỏi thử lại từ đầu.
+      if (!res.error && m !== model && props) {
+        props.setProperty(P_MODEL, m);
+      }
+      return res;
+    }
+  }
+
+  return {
+    error: lastError || fail_('UPSTREAM_ERROR',
+      'Gemini đang quá tải trên mọi model. Đây là sự cố tạm thời phía Google, thử lại sau ít phút.')
+  };
+}
+
+function callOneModel_(model, apiKey, payload) {
   var url = API_BASE + encodeURIComponent(model) + ':generateContent?key=' + encodeURIComponent(apiKey);
 
-  var resp = UrlFetchApp.fetch(url, {
-    method: 'post',
-    contentType: 'application/json',
-    payload: JSON.stringify(payload),
-    muteHttpExceptions: true
-  });
+  var resp;
+  try {
+    resp = UrlFetchApp.fetch(url, {
+      method: 'post',
+      contentType: 'application/json',
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+  } catch (e) {
+    return { retryOther: true, error: fail_('UPSTREAM_ERROR', 'Không gọi được Gemini: ' + e.message) };
+  }
 
   var code = resp.getResponseCode();
   var body = resp.getContentText();
@@ -313,11 +440,22 @@ function callGemini_(model, apiKey, payload) {
   if (code === 429) {
     return { error: fail_('RATE_LIMIT', 'Gemini báo đã chạm hạn mức. Chờ một lát hoặc kiểm tra quota trong Google AI Studio.') };
   }
-  if (code === 400 || code === 403) {
-    return { error: fail_('UPSTREAM_ERROR', 'Gemini từ chối request (HTTP ' + code + '). Kiểm tra API key còn hiệu lực và model có tồn tại không.') };
+  if (code === 403) {
+    return { error: fail_('UPSTREAM_ERROR', 'Gemini từ chối API key (HTTP 403). Kiểm tra key còn hiệu lực trong Google AI Studio.') };
+  }
+  // 404: model không còn cấp cho key này. 503: Google đang quá tải.
+  // Cả hai đều đáng thử model khác thay vì báo lỗi cho người dùng ngay.
+  if (code === 404 || code === 503 || code === 500) {
+    return {
+      retryOther: true,
+      error: fail_('UPSTREAM_ERROR', 'Model ' + model + ' không phản hồi (HTTP ' + code + ').')
+    };
+  }
+  if (code === 400) {
+    return { error: fail_('UPSTREAM_ERROR', 'Gemini từ chối request (HTTP 400). Nội dung gửi lên có thể không hợp lệ.') };
   }
   if (code !== 200) {
-    return { error: fail_('UPSTREAM_ERROR', 'Gemini trả lỗi HTTP ' + code + '.') };
+    return { retryOther: true, error: fail_('UPSTREAM_ERROR', 'Gemini trả lỗi HTTP ' + code + '.') };
   }
 
   var data;

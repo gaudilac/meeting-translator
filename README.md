@@ -157,6 +157,9 @@ Chạy trong Apps Script editor:
 | Nút "Nghe từ tab họp" bị mờ | Đang dùng điện thoại hoặc trình duyệt không hỗ trợ. Dùng micro thay thế |
 | Sửa `Code.gs` xong không thấy đổi | Phải **Deploy → Manage deployments → Edit → New version** |
 | "Rất tiếc, không thể mở tệp tại thời điểm này" | Script chưa được cấp quyền OAuth. Mở script trong trình duyệt, chạy `setup()` một lần và bấm **Allow** |
+| Vẫn báo "chưa thay chỗ giữ chỗ" dù đã dán key | Editor chưa lưu file. Bấm **Ctrl+S** (hoặc Cmd+S), tải lại trang bằng **F5**, rồi Run lại |
+| "This model is currently experiencing high demand" | Google đang quá tải — sự cố tạm thời, không phải lỗi key. Script tự đổi model và thử lại; nếu vẫn lỗi, chờ vài phút |
+| "no longer available to new users" | Model thế hệ cũ không còn cấp cho key mới. Script tự chuyển sang model mới hơn |
 
 ---
 
