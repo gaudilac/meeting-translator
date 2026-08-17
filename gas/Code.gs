@@ -28,9 +28,13 @@ var API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
 // ---------------------------------------------------------------- cài đặt
 
 /**
- * BƯỚC 1 — dán key vào giữa hai dấu nháy rồi bấm Run.
- * Sau khi chạy xong, xoá key khỏi dòng này (key đã được lưu an toàn
- * trong UserProperties, để lại trong code chỉ thêm rủi ro lộ).
+ * BƯỚC 1 — thay DÁN_API_KEY_VÀO_ĐÂY bằng key thật của bạn rồi bấm Run.
+ *
+ * Lấy key tại https://aistudio.google.com/apikey
+ * Giữ nguyên hai dấu nháy, chỉ thay phần chữ bên trong.
+ *
+ * Sau khi chạy thành công, xoá key khỏi dòng này — key đã được lưu an toàn
+ * trong UserProperties, để lại trong code chỉ thêm rủi ro lộ.
  */
 function setup() {
   setKey('DÁN_API_KEY_VÀO_ĐÂY');
@@ -39,12 +43,63 @@ function setup() {
 
 /** Đặt hoặc đổi API key. */
 function setKey(apiKey) {
-  if (!apiKey || apiKey.indexOf('AIza') !== 0) {
-    throw new Error('API key không hợp lệ. Key Gemini bắt đầu bằng "AIza".');
+  var key = String(apiKey == null ? '' : apiKey).trim();
+
+  if (!key || key === 'DÁN_API_KEY_VÀO_ĐÂY') {
+    throw new Error(
+      'Bạn chưa thay chỗ giữ chỗ bằng key thật.\n' +
+      'Sửa dòng setKey(\'DÁN_API_KEY_VÀO_ĐÂY\') trong hàm setup(), dán key của bạn vào giữa hai dấu nháy rồi Run lại.\n' +
+      'Lấy key tại: https://aistudio.google.com/apikey'
+    );
   }
-  PropertiesService.getUserProperties().setProperty(P_KEY, apiKey.trim());
+
+  // Không chặn theo tiền tố: key Gemini thường bắt đầu bằng "AIza" nhưng
+  // không phải dạng nào cũng vậy. Chỉ loại các trường hợp chắc chắn sai,
+  // rồi để verifyKey_() hỏi thẳng Google xem key có dùng được không.
+  if (key.length < 20 || /\s/.test(key)) {
+    throw new Error(
+      'Key trông không đúng định dạng (quá ngắn hoặc có khoảng trắng).\n' +
+      'Copy lại toàn bộ key từ https://aistudio.google.com/apikey, không kèm dấu nháy hay khoảng trắng thừa.'
+    );
+  }
+
+  var check = verifyKey_(key);
+  if (!check.ok) throw new Error(check.message);
+
+  PropertiesService.getUserProperties().setProperty(P_KEY, key);
   ensureToken_();
-  Logger.log('Đã lưu API key. Chạy showSetup() để lấy URL và token.');
+  Logger.log('Đã lưu API key và xác nhận Google chấp nhận key này.');
+}
+
+/** Hỏi Google xem key có thật sự dùng được không — chắc chắn hơn đoán theo tiền tố. */
+function verifyKey_(key) {
+  var resp;
+  try {
+    resp = UrlFetchApp.fetch(
+      'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(key),
+      { method: 'get', muteHttpExceptions: true }
+    );
+  } catch (e) {
+    return { ok: false, message: 'Không kết nối được tới Google để kiểm tra key: ' + e.message };
+  }
+
+  var code = resp.getResponseCode();
+  if (code === 200) return { ok: true };
+
+  if (code === 400 || code === 401 || code === 403) {
+    return {
+      ok: false,
+      message:
+        'Google từ chối key này (HTTP ' + code + ').\n' +
+        'Kiểm tra: key đã copy đủ chưa, còn hiệu lực không, và đã bật Generative Language API cho project chưa.\n' +
+        'Tạo key mới tại: https://aistudio.google.com/apikey'
+    };
+  }
+
+  return {
+    ok: false,
+    message: 'Google trả lỗi HTTP ' + code + ' khi kiểm tra key. Thử lại sau ít phút.'
+  };
 }
 
 /** In ra URL Web App và token để dán vào web. */
