@@ -115,7 +115,9 @@ Chỉ dùng đường gửi audio lên Gemini khi Web Speech API không khả d�
 1. `SpeechRecognition` với `continuous = true`, `interimResults = true`, `lang = 'en-US'`.
 2. Kết quả **interim** → hiện ngay tiếng Anh ở dòng đang chạy, đồng thời gửi đi **dịch nháp** theo nhịp giới hạn (mặc định 1,2 giây, chỉnh được bằng thanh trượt, đặt 0 để tắt).
 3. Bản dịch nháp hiện mờ/nghiêng ngay trên dòng tiếng Anh, **cùng cỡ chữ với bản chốt** để lúc chốt không nhảy layout.
-4. Kết quả **final** → đẩy vào hàng đợi dịch; bản chốt thay thế bản nháp tại chỗ.
+4. Kết quả **final** → hiện **ngay** một dòng lịch sử kèm gợi nghĩa từ điển, rồi đẩy vào hàng đợi dịch; bản dịch AI về sau sẽ thay nội dung dòng đó tại chỗ.
+
+> ⚠️ Dòng lịch sử **không được đợi** bản dịch từ mạng mới xuất hiện. Nếu đợi, câu đã nói xong vài giây vẫn chưa thấy gì và người dùng tưởng hệ thống treo. `addLine()` trả về id, `updateLine(id, ...)` điền bản dịch sau.
 5. **Gộp câu thông minh:** chờ 400ms; nếu có câu final mới tới trong lúc chờ thì gộp lại thành một request. Tránh gọi API cho từng mẩu 2–3 chữ.
 6. Nhận bản dịch → thay dòng interim bằng cặp song ngữ hoàn chỉnh.
 7. **Giữ ngữ cảnh:** gửi kèm 2–3 câu đã dịch trước đó để AI dịch đúng đại từ và thuật ngữ nối tiếp. Không gửi cả transcript (tốn token vô ích).
@@ -131,6 +133,25 @@ Luồng nháp chạy song song luồng chốt và **luôn nhường đường**:
 - Bản nháp chỉ gửi kèm 2 câu ngữ cảnh thay vì 3, vì nó gọi thường xuyên hơn.
 
 **Chi phí:** mỗi bản nháp là một request. Nhịp 1,2 giây làm chi phí tăng khoảng 2–3 lần so với chỉ dịch câu chốt. Thanh trượt phải nói rõ đánh đổi này ngay tại chỗ, không giấu trong tài liệu.
+
+### 4.2.2 Từ điển tra tức thì
+
+Web kèm `dictionary.json` — từ điển Anh-Việt tĩnh sinh sẵn bằng AI, tra ngay trong trình duyệt, **không tốn token và không có độ trễ mạng**.
+
+**Vai trò:** hiện nghĩa tiếng Việt tức thì trong lúc người ta còn đang nói, để người đọc bắt được ý ngay. AI vẫn là thứ chốt câu cuối cùng.
+
+**Giới hạn phải nói rõ với người dùng:** đây là gợi nghĩa theo từng từ, **không phải bản dịch đúng ngữ pháp**. Tiếng Việt không chia thì và trật tự từ khác tiếng Anh, nên tra từng từ không thể ra câu chuẩn. Không được quảng cáo nó như bản dịch thật.
+
+Quy tắc bắt buộc:
+
+- Xử lý biến cách khi tra: `meetings` → `meeting`, `reviewed` → `review`, `discussing` → `discuss`, kể cả phụ âm gấp đôi (`running` → `run`).
+- **Bỏ hẳn** mạo từ và trợ động từ (`the`, `a`, `an`, `is`, `was`, `do`...) thay vì dịch ra chữ — dịch chúng làm câu rối hơn nhiều.
+- Từ không tra được thì **giữ nguyên tiếng Anh**, không đoán bừa — thà để lộ chỗ chưa biết.
+- Chỉ hiện khi phủ ≥ 50% số từ, dưới ngưỡng đó thì im lặng.
+- Hiển thị **mờ hơn** bản nháp AI để người đọc phân biệt được đây là bản tạm.
+- Bản nháp AI đã có thì ưu tiên nó, gợi nghĩa chỉ lấp chỗ trống lúc chờ.
+
+**Sinh từ điển:** `tools/build-dictionary.mjs` gọi Gemini theo lô rồi lưu file tĩnh; chạy lại được và chỉ sinh phần còn thiếu. Model không bám sát thứ tự tần suất nên nhiều từ chức năng cực phổ biến bị lọt lưới — `tools/fill-core.mjs` hỏi thẳng theo từng nhóm để lấp.
 
 ### 4.3 Xử lý lỗi bắt buộc
 

@@ -60,6 +60,10 @@ function stems(word) {
   return out;
 }
 
+// Tiếng Việt không có mạo từ và không dùng trợ động từ như tiếng Anh.
+// Dịch chúng ra chữ ("the" -> "đó") làm câu rối hơn là bỏ hẳn.
+const SKIP = new Set(['the', 'a', 'an', 'to', 'of', 'do', 'does', 'did', 'is', 'are', 'am', 'was', 'were', 'be', 'been', 'being']);
+
 export function lookupWord(word) {
   if (!dict) return null;
   const w = word.toLowerCase();
@@ -83,6 +87,13 @@ export function glossSentence(text) {
   const parts = tokens.map((tok) => {
     if (!/^[A-Za-z']+$/.test(tok)) return tok;
     words++;
+
+    // Từ chức năng: tính là đã xử lý nhưng bỏ khỏi kết quả.
+    if (SKIP.has(tok.toLowerCase())) {
+      hits++;
+      return '';
+    }
+
     const found = lookupWord(tok);
     if (found) {
       hits++;
@@ -91,5 +102,8 @@ export function glossSentence(text) {
     return tok;
   });
 
-  return { text: parts.join(''), coverage: words ? hits / words : 0 };
+  // Bỏ từ chức năng để lại khoảng trắng thừa.
+  const glossed = parts.join('').replace(/\s{2,}/g, ' ').trim();
+
+  return { text: glossed, coverage: words ? hits / words : 0 };
 }
