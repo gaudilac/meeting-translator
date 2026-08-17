@@ -62,7 +62,7 @@ async function callGemini(prompt) {
       if (res.status === 503 || res.status === 500 || res.status === 404) continue;
 
       if (res.status === 429) {
-        console.log('   chạm hạn mức, chờ 60 giây...');
+        console.log('\n   429: hết hạn mức API, chờ 60 giây...');
         await sleep(60000);
         continue;
       }
@@ -105,6 +105,7 @@ const dict = existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf8')) : {};
 console.log(`Đã có ${Object.keys(dict).length} từ. Mục tiêu ${TARGET}.\n`);
 
 let stall = 0;
+let apiFail = 0;
 
 while (Object.keys(dict).length < TARGET) {
   const have = Object.keys(dict).length;
@@ -122,6 +123,23 @@ while (Object.keys(dict).length < TARGET) {
   process.stdout.write(`[${have}/${TARGET}] sinh lô từ vị trí ~${from}... `);
 
   const raw = await callGemini(prompt);
+
+  // Phân biệt "API hỏng" với "model hết từ". Gộp chung hai trường hợp này
+  // khiến script báo nhầm "model không sinh thêm được" khi thật ra chỉ là
+  // hết hạn mức, và người chạy tưởng từ điển đã đầy đủ.
+  if (raw === null) {
+    if (++apiFail >= 3) {
+      console.error('\n⚠ API thất bại 3 lần liên tiếp (thường là hết hạn mức).');
+      console.error(`  Đã lưu ${Object.keys(dict).length} từ. Chạy lại script khi hạn mức hồi lại.`);
+      process.exitCode = 1;
+      break;
+    }
+    console.log('API không trả về dữ liệu, thử lại lô này...');
+    await sleep(30000);
+    continue;
+  }
+  apiFail = 0;
+
   const batch = clean(raw);
 
   let added = 0;
@@ -134,7 +152,7 @@ while (Object.keys(dict).length < TARGET) {
 
   console.log(`+${added} từ mới`);
 
-  writeFileSync(OUT, JSON.stringify(dict, null, 0));
+  if (added > 0) writeFileSync(OUT, JSON.stringify(dict, null, 0));
 
   // Model bắt đầu lặp lại thì dừng, ép thêm chỉ tốn tiền mà không có từ mới.
   if (added < 5) {

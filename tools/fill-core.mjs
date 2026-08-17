@@ -62,7 +62,11 @@ async function call(prompt) {
       } catch { continue; }
 
       if ([503, 500, 404].includes(res.status)) continue;
-      if (res.status === 429) { await sleep(60000); continue; }
+      if (res.status === 429) {
+        console.log('\n   429: hết hạn mức API, chờ 60 giây...');
+        await sleep(60000);
+        continue;
+      }
       if (!res.ok) continue;
 
       const data = await res.json();
@@ -90,19 +94,39 @@ function clean(raw) {
 const dict = existsSync(OUT) ? JSON.parse(readFileSync(OUT, 'utf8')) : {};
 console.log(`Bắt đầu với ${Object.keys(dict).length} từ.\n`);
 
+let failed = 0;
+let totalAdded = 0;
+
 for (let i = 0; i < GROUPS.length; i++) {
   process.stdout.write(`[${i + 1}/${GROUPS.length}] `);
   const raw = await call(`Cho nghĩa tiếng Việt của: ${GROUPS[i]}\n\nTrả JSON object đầy đủ.`);
-  const batch = clean(raw);
 
+  // Phân biệt "API hỏng" với "không có từ mới". Trước đây gộp chung nên khi
+  // hết hạn mức, script vẫn báo "+0 từ" và ghi đè file như thể chạy thành công.
+  if (raw === null) {
+    failed++;
+    console.log('THẤT BẠI (API không trả về dữ liệu) — bỏ qua, KHÔNG ghi file');
+    continue;
+  }
+
+  const batch = clean(raw);
   let added = 0;
   for (const [w, m] of Object.entries(batch)) {
     if (!dict[w]) { dict[w] = m; added++; }
   }
+  totalAdded += added;
 
   console.log(`+${added} từ mới (tổng ${Object.keys(dict).length})`);
-  writeFileSync(OUT, JSON.stringify(dict, null, 0));
+
+  // Chỉ ghi khi thật sự có thêm từ — tránh ghi đè file tốt bằng dữ liệu cũ.
+  if (added > 0) writeFileSync(OUT, JSON.stringify(dict, null, 0));
   await sleep(1000);
 }
 
-console.log(`\nXong: ${Object.keys(dict).length} từ.`);
+console.log(`\nXong: ${Object.keys(dict).length} từ (thêm mới ${totalAdded}).`);
+
+if (failed > 0) {
+  console.error(`\n⚠ ${failed}/${GROUPS.length} lô THẤT BẠI do lỗi API.`);
+  console.error('  Từ điển chưa đầy đủ. Chạy lại script khi hạn mức API hồi lại.');
+  process.exit(1);
+}
