@@ -1,5 +1,7 @@
 # Meeting Translator
 
+**▶ Dùng ngay: [gaudilac.github.io/meeting-translator](https://gaudilac.github.io/meeting-translator/)**
+
 Web phiên dịch hội thoại tiếng Anh sang tiếng Việt gần thời gian thực, dùng cho cuộc họp trực tuyến.
 
 API key Gemini nằm trong Google Apps Script thuộc **tài khoản Google của chính bạn**. Trang web không nhận, không lưu và không gửi key đi bất cứ đâu — kể cả tới tác giả.
