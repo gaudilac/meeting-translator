@@ -47,6 +47,17 @@ Chọn hàm `setup` trong thanh công cụ rồi bấm **Run**. Xong thì xoá k
 
 Lần chạy đầu Google sẽ hỏi quyền — chọn tài khoản, bấm **Advanced** → **Go to ... (unsafe)** → **Allow**. Cảnh báo này xuất hiện vì script chưa được Google xét duyệt; đây là script của chính bạn nên không có bên thứ ba nào truy cập được.
 
+> **Cách nhanh hơn — dùng clasp:** nếu đã cài [clasp](https://github.com/google/clasp) và `clasp login`, chạy trong thư mục `gas/`:
+>
+> ```bash
+> clasp create-script --title "Meeting Translator" --type standalone
+> clasp push --force
+> clasp create-deployment --description "v1"
+> clasp list-deployments        # lấy ID để ghép thành URL .../exec
+> ```
+>
+> File `appsscript.json` trong repo đã khai sẵn `access: ANYONE_ANONYMOUS` và `executeAs: USER_DEPLOYING`, nên không cần chỉnh gì trong giao diện. **Vẫn phải mở script trong trình duyệt chạy `setup()` một lần** để cấp quyền OAuth — Google không cho ủy quyền qua dòng lệnh.
+
 ### 4. Deploy
 
 **Deploy** → **New deployment** → biểu tượng bánh răng → **Web app**:
@@ -145,6 +156,7 @@ Chạy trong Apps Script editor:
 | Phụ đề dừng sau khoảng một phút | Đã xử lý tự khởi động lại. Nếu vẫn dừng, kiểm tra kết nối mạng |
 | Nút "Nghe từ tab họp" bị mờ | Đang dùng điện thoại hoặc trình duyệt không hỗ trợ. Dùng micro thay thế |
 | Sửa `Code.gs` xong không thấy đổi | Phải **Deploy → Manage deployments → Edit → New version** |
+| "Rất tiếc, không thể mở tệp tại thời điểm này" | Script chưa được cấp quyền OAuth. Mở script trong trình duyệt, chạy `setup()` một lần và bấm **Allow** |
 
 ---
 

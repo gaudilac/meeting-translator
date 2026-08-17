@@ -9,3 +9,7 @@ Thumbs.db
 .env.*
 *.key
 secrets.*
+
+# clasp: scriptId là của riêng mỗi người, không đẩy lên repo chung
+.clasp.json
+.clasprc.json
