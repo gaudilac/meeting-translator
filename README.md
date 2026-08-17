@@ -110,6 +110,28 @@ Vào **Settings → Pages**, chọn nhánh `main` và thư mục `/ (root)`. Kh�
 
 Thanh công cụ dưới cùng: tạm dừng tự cuộn để đọc lại, ẩn/hiện tiếng Anh gốc, đổi cỡ chữ, tải transcript về dạng Markdown.
 
+### Từ điển tra tức thì
+
+Web kèm sẵn một từ điển Anh-Việt tĩnh (`dictionary.json`). Khi người ta đang nói, hệ thống **tra từ điển ngay trong trình duyệt** và hiện nghĩa tiếng Việt tức thì — không gọi API, không tốn token, không có độ trễ mạng.
+
+Đây là **gợi nghĩa theo từng từ, không phải bản dịch đúng ngữ pháp**. Ví dụ:
+
+> EN: *Let us move on to the next agenda item*
+> Gợi nghĩa: "Let chúng tôi di chuyển trên đến đó tiếp theo chương trình họp hạng mục"
+> AI chốt lại: "Chúng ta hãy chuyển sang nội dung tiếp theo của chương trình họp"
+
+Tiếng Việt không chia thì và có trật tự từ khác tiếng Anh, nên tra từng từ không thể ra câu chuẩn. Vai trò của nó là giúp bạn **bắt được ý ngay lập tức** trong lúc chờ AI chốt câu. Chữ mờ hơn = bản tra từ điển; chữ đậm lên = bản AI đã chốt.
+
+Từ nào không có trong từ điển thì giữ nguyên tiếng Anh, thay vì đoán bừa.
+
+Muốn tự sinh lại từ điển:
+
+```bash
+GEMINI_KEY=AIza... node tools/build-dictionary.mjs 15000
+```
+
+Script chạy lại được nhiều lần — nó đọc file cũ và chỉ sinh phần còn thiếu, dừng giữa chừng rồi chạy tiếp không mất công đã làm.
+
 ### Dịch nháp khi đang nói
 
 Tiếng Việt hiện **ngay lúc người ta còn đang nói**, dạng chữ mờ nghiêng, và tự sửa lại liên tục khi nghe thêm được từ mới. Khi người nói dứt câu, bản dịch chốt thay thế bản nháp tại chỗ với văn phong hoàn chỉnh hơn.

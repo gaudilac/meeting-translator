@@ -12,6 +12,7 @@ import {
   AudioError
 } from './audio.js';
 import { Recognizer, supportsSpeechRecognition } from './recognizer.js';
+import * as dictionary from './dictionary.js';
 import {
   loadConnection,
   saveConnection,
@@ -57,6 +58,12 @@ function init() {
 
   bindEvents();
   ui.setStatus('idle');
+
+  // Tải nền: chưa xong thì chỉ mất phần gợi nghĩa tức thì, không chặn gì.
+  dictionary.load().then(() => {
+    const n = dictionary.size();
+    if (n) ui.el.dictNote.textContent = `Từ điển: ${n.toLocaleString('vi-VN')} từ, tra tức thì không tốn API.`;
+  });
 }
 
 function applyPreferences() {
@@ -193,17 +200,28 @@ async function start(source) {
 
   state.queue = new TranslationQueue(state.conn, {
     draftIntervalMs: state.draftInterval,
-    onResult: ({ source: src, translation, stats }) => {
+    onPending: ({ source: src }) => {
       ui.setInterim('');
-      ui.addLine({ source: src, translation });
+      // Hiện dòng ngay với gợi nghĩa từ điển, rồi thay bằng bản dịch AI khi về.
+      const gloss = dictionary.glossSentence(src);
+      return ui.addLine({
+        source: src,
+        translation: gloss && gloss.coverage >= 0.5 ? gloss.text : '',
+        pending: true
+      });
+    },
+    onResult: ({ ticket, source: src, translation, stats }) => {
+      ui.setInterim('');
+      if (ticket) ui.updateLine(ticket, { translation });
+      else ui.addLine({ source: src, translation });
       ui.updateUsage(stats);
     },
     onDraft: ({ translation, stats }) => {
       ui.setDraft(translation);
       ui.updateUsage(stats);
     },
-    onError: (err, text) => {
-      handleTranslationError(err, text);
+    onError: (err, text, ticket) => {
+      handleTranslationError(err, text, ticket);
     },
     onStateChange: (s) => {
       if (!state.running) return;
@@ -235,6 +253,12 @@ function startRecognizer() {
   state.recognizer = new Recognizer({
     onInterim: (text) => {
       ui.setInterim(text);
+
+      // Gợi nghĩa từ từ điển hiện NGAY, không chờ mạng — đây là thứ giữ cho
+      // tiếng Việt bám kịp tiếng Anh. Bản nháp từ AI tới sau sẽ thay nó.
+      const gloss = dictionary.glossSentence(text);
+      if (gloss && gloss.coverage >= 0.5) ui.setGloss(gloss.text);
+
       state.queue.pushDraft(text);
     },
     onFinal: (text) => {
@@ -307,7 +331,7 @@ function stop() {
 
 // ------------------------------------------------------------------ lỗi
 
-function handleTranslationError(err, text) {
+function handleTranslationError(err, text, ticket) {
   const code = err instanceof GasError ? err.code : 'UNKNOWN';
 
   if (code === 'UNAUTHORIZED' || code === 'NO_API_KEY' || code === 'BAD_DEPLOY') {
@@ -326,7 +350,15 @@ function handleTranslationError(err, text) {
   }
 
   ui.showNotice(err.message, { kind: 'error' });
-  ui.addLine({ source: text, translation: '⚠ Không dịch được đoạn này', failed: true });
+
+  // Giữ lại gợi nghĩa từ điển nếu có — vẫn hơn là mất trắng câu đó.
+  const gloss = dictionary.glossSentence(text);
+  const fallback = gloss && gloss.coverage >= 0.5
+    ? gloss.text + '  ⚠ (tra từ điển, AI không dịch được)'
+    : '⚠ Không dịch được đoạn này';
+
+  if (ticket) ui.updateLine(ticket, { translation: fallback, failed: true });
+  else ui.addLine({ source: text, translation: fallback, failed: true });
 }
 
 // ------------------------------------------------------------------ cài đặt

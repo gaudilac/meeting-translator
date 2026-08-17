@@ -31,12 +31,14 @@ export const el = {
   btnForget: $('btnForget'),
   inpDraft: $('inpDraft'),
   draftLabel: $('draftLabel'),
-  draftNote: $('draftNote')
+  draftNote: $('draftNote'),
+  dictNote: $('dictNote')
 };
 
 export const lines = [];
 
 let autoScroll = true;
+let lineSeq = 0;
 
 export function setAutoScroll(on) {
   autoScroll = on;
@@ -83,10 +85,14 @@ export function hideNotice() {
 // Tách riêng vì hai luồng cập nhật độc lập với nhịp khác nhau.
 let liveSource = '';
 let liveDraft = '';
+let liveGloss = '';
 
 export function setInterim(text) {
   liveSource = text || '';
-  if (!liveSource) liveDraft = '';
+  if (!liveSource) {
+    liveDraft = '';
+    liveGloss = '';
+  }
   renderLive();
 }
 
@@ -95,8 +101,13 @@ export function setDraft(translation) {
   renderLive();
 }
 
+export function setGloss(text) {
+  liveGloss = text || '';
+  renderLive();
+}
+
 function renderLive() {
-  if (!liveSource && !liveDraft) {
+  if (!liveSource && !liveDraft && !liveGloss) {
     el.live.hidden = true;
     el.live.replaceChildren();
     return;
@@ -105,11 +116,14 @@ function renderLive() {
   el.live.hidden = false;
   el.live.replaceChildren();
 
-  if (liveDraft) {
-    const vi = document.createElement('div');
-    vi.className = 'live-vi';
-    vi.textContent = liveDraft;
-    el.live.append(vi);
+  // Bản nháp AI đã có thì ưu tiên nó; gợi nghĩa từ điển chỉ lấp chỗ trống
+  // trong lúc chờ, vì nó đúng nghĩa từng từ nhưng chưa đúng ngữ pháp.
+  const vi = liveDraft || liveGloss;
+  if (vi) {
+    const node = document.createElement('div');
+    node.className = 'live-vi' + (liveDraft ? '' : ' gloss');
+    node.textContent = vi;
+    el.live.append(node);
   }
 
   if (liveSource) {
@@ -122,18 +136,27 @@ function renderLive() {
   if (autoScroll) scrollToEnd();
 }
 
-export function addLine({ source, translation, failed = false }) {
+/**
+ * Thêm dòng vào lịch sử.
+ *
+ * Trả về id để cập nhật sau: câu tiếng Anh được đưa vào lịch sử NGAY khi
+ * người nói dứt câu, không đợi bản dịch từ mạng về. Nếu đợi, dòng lịch sử
+ * chỉ xuất hiện sau vài giây và người đọc tưởng hệ thống bị treo.
+ */
+export function addLine({ source, translation, failed = false, pending = false }) {
   el.empty.hidden = true;
 
   const time = new Date();
-  lines.push({ source, translation, time, failed });
+  const id = ++lineSeq;
+  lines.push({ id, source, translation, time, failed });
 
   const node = document.createElement('article');
-  node.className = 'line' + (failed ? ' failed' : '');
+  node.className = 'line' + (failed ? ' failed' : '') + (pending ? ' pending' : '');
+  node.dataset.lineId = String(id);
 
   const vi = document.createElement('div');
   vi.className = 'vi';
-  vi.textContent = translation;
+  vi.textContent = translation || '';
 
   const en = document.createElement('div');
   en.className = 'en';
@@ -145,6 +168,27 @@ export function addLine({ source, translation, failed = false }) {
 
   node.append(vi, en, stamp);
   el.transcript.append(node);
+
+  if (autoScroll) scrollToEnd();
+  return id;
+}
+
+/** Điền bản dịch vào dòng đã hiện sẵn. */
+export function updateLine(id, { translation, failed = false }) {
+  const node = el.transcript.querySelector(`[data-line-id="${id}"]`);
+  if (!node) return;
+
+  node.classList.remove('pending');
+  node.classList.toggle('failed', failed);
+
+  const vi = node.querySelector('.vi');
+  if (vi) vi.textContent = translation;
+
+  const rec = lines.find((l) => l.id === id);
+  if (rec) {
+    rec.translation = translation;
+    rec.failed = failed;
+  }
 
   if (autoScroll) scrollToEnd();
 }

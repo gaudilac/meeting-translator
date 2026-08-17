@@ -98,10 +98,11 @@ export function transcribeAndTranslate(conn, audioBase64, mimeType, context) {
  * retry với backoff, và tự giãn nhịp khi chạm rate limit.
  */
 export class TranslationQueue {
-  constructor(conn, { onResult, onDraft, onError, onStateChange, mergeWindowMs = 400, draftIntervalMs = 1200 }) {
+  constructor(conn, { onResult, onDraft, onPending, onError, onStateChange, mergeWindowMs = 400, draftIntervalMs = 1200 }) {
     this.conn = conn;
     this.onResult = onResult;
     this.onDraft = onDraft || (() => {});
+    this.onPending = onPending || null;
     this.onError = onError;
     this.onStateChange = onStateChange || (() => {});
     this.mergeWindowMs = mergeWindowMs;
@@ -201,6 +202,10 @@ export class TranslationQueue {
     this.running = true;
     this.onStateChange('translating');
 
+    // Báo câu đã chốt NGAY để UI kịp hiện dòng lịch sử. Nếu đợi mạng trả về
+    // mới hiện, dòng chỉ xuất hiện sau vài giây và người đọc tưởng máy treo.
+    const ticket = this.onPending ? this.onPending({ source: text }) : null;
+
     const waitFor = this.throttleUntil - Date.now();
     if (waitFor > 0) await sleep(waitFor);
 
@@ -217,7 +222,7 @@ export class TranslationQueue {
         this.stats.tokensIn += res.usage?.in || 0;
         this.stats.tokensOut += res.usage?.out || 0;
 
-        this.onResult({ source: res.source || text, translation: res.translation, stats: this.stats });
+        this.onResult({ ticket, source: res.source || text, translation: res.translation, stats: this.stats });
         lastError = null;
         break;
       } catch (err) {
@@ -238,7 +243,7 @@ export class TranslationQueue {
       }
     }
 
-    if (lastError) this.onError(lastError, text);
+    if (lastError) this.onError(lastError, text, ticket);
 
     this.running = false;
     this.onStateChange('idle');

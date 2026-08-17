@@ -283,10 +283,28 @@ body[data-source="off"] .line .en { display: none; }
   font-style: italic;
 }
 
+/* Gợi nghĩa từ điển: đúng nghĩa từng từ nhưng chưa đúng ngữ pháp,
+   nên làm mờ hơn bản nháp AI để người đọc biết đây chỉ là bản tạm. */
+.live-vi.gloss {
+  color: color-mix(in srgb, var(--text) 52%, transparent);
+}
+
 .live-en {
   font-size: var(--fs-source);
   color: var(--muted);
   font-style: italic;
+}
+
+/* Dòng lịch sử đang chờ bản dịch AI. */
+.line.pending .vi {
+  color: color-mix(in srgb, var(--text) 55%, transparent);
+  font-style: italic;
+}
+
+.line.pending::after {
+  content: 'đang dịch…';
+  font-size: 0.7rem;
+  color: var(--muted);
 }
 
 body[data-source="off"] .live-en { display: none; }
