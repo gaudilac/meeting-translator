@@ -98,12 +98,14 @@ export function transcribeAndTranslate(conn, audioBase64, mimeType, context) {
  * retry với backoff, và tự giãn nhịp khi chạm rate limit.
  */
 export class TranslationQueue {
-  constructor(conn, { onResult, onError, onStateChange, mergeWindowMs = 400 }) {
+  constructor(conn, { onResult, onDraft, onError, onStateChange, mergeWindowMs = 400, draftIntervalMs = 1200 }) {
     this.conn = conn;
     this.onResult = onResult;
+    this.onDraft = onDraft || (() => {});
     this.onError = onError;
     this.onStateChange = onStateChange || (() => {});
     this.mergeWindowMs = mergeWindowMs;
+    this.draftIntervalMs = draftIntervalMs;
 
     this.pending = [];
     this.mergeTimer = null;
@@ -111,10 +113,65 @@ export class TranslationQueue {
     this.context = [];
     this.throttleUntil = 0;
     this.stats = { requests: 0, tokensIn: 0, tokensOut: 0 };
+
+    // Luồng dịch nháp: chạy song song, luôn nhường đường cho luồng chốt câu.
+    this.draftRunning = false;
+    this.draftLastText = '';
+    this.draftLastAt = 0;
+    this.draftSeq = 0;
   }
 
   setConnection(conn) {
     this.conn = conn;
+  }
+
+  setDraftInterval(ms) {
+    this.draftIntervalMs = ms;
+  }
+
+  /**
+   * Dịch nháp phần người nói đang nói dở.
+   *
+   * Gọi rất thường xuyên (mỗi lần Web Speech API cập nhật), nên phải tự chặn:
+   * bỏ qua nếu chưa tới nhịp, nếu chữ chưa đổi, hoặc nếu luồng chốt câu đang
+   * chạy — bản chuẩn luôn quan trọng hơn bản nháp.
+   */
+  pushDraft(text) {
+    if (this.draftIntervalMs <= 0) return;
+
+    const trimmed = text.trim();
+    if (!trimmed || trimmed.length < 8) return;
+    if (trimmed === this.draftLastText) return;
+    if (this.running || this.draftRunning) return;
+    if (Date.now() - this.draftLastAt < this.draftIntervalMs) return;
+    if (Date.now() < this.throttleUntil) return;
+
+    this.draftLastText = trimmed;
+    this.draftLastAt = Date.now();
+    this.runDraft(trimmed);
+  }
+
+  async runDraft(text) {
+    this.draftRunning = true;
+    const seq = ++this.draftSeq;
+
+    try {
+      const res = await translate(this.conn, text, this.context.slice(-2));
+
+      // Bỏ kết quả đã cũ: câu có thể đã được chốt trong lúc chờ mạng.
+      if (seq === this.draftSeq && !this.running) {
+        this.stats.requests += 1;
+        this.stats.tokensIn += res.usage?.in || 0;
+        this.stats.tokensOut += res.usage?.out || 0;
+        this.onDraft({ source: text, translation: res.translation, stats: this.stats });
+      }
+    } catch (err) {
+      // Bản nháp hỏng thì im lặng bỏ qua — bản chuẩn sẽ tới sau và đúng hơn.
+      // Riêng rate limit phải tôn trọng để không đào sâu thêm.
+      if (err.code === 'RATE_LIMIT') this.throttleUntil = Date.now() + 15000;
+    } finally {
+      this.draftRunning = false;
+    }
   }
 
   push(text) {
@@ -130,6 +187,11 @@ export class TranslationQueue {
   flush() {
     clearTimeout(this.mergeTimer);
     if (!this.pending.length || this.running) return;
+
+    // Vô hiệu hoá mọi bản nháp đang bay về, tránh nó ghi đè bản chuẩn.
+    this.draftSeq++;
+    this.draftLastText = '';
+
     const batch = this.pending.join(' ');
     this.pending = [];
     this.run(batch);
@@ -189,6 +251,9 @@ export class TranslationQueue {
     this.pending = [];
     this.context = [];
     this.throttleUntil = 0;
+    this.draftSeq++;
+    this.draftLastText = '';
+    this.draftLastAt = 0;
   }
 }
 

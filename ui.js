@@ -28,7 +28,10 @@ export const el = {
   btnTest: $('btnTest'),
   testResult: $('testResult'),
   btnCopyCode: $('btnCopyCode'),
-  btnForget: $('btnForget')
+  btnForget: $('btnForget'),
+  inpDraft: $('inpDraft'),
+  draftLabel: $('draftLabel'),
+  draftNote: $('draftNote')
 };
 
 export const lines = [];
@@ -76,14 +79,46 @@ export function hideNotice() {
   el.notice.hidden = true;
 }
 
+// Dòng đang chạy giữ hai phần: tiếng Anh nghe được và bản dịch nháp.
+// Tách riêng vì hai luồng cập nhật độc lập với nhịp khác nhau.
+let liveSource = '';
+let liveDraft = '';
+
 export function setInterim(text) {
-  if (!text) {
+  liveSource = text || '';
+  if (!liveSource) liveDraft = '';
+  renderLive();
+}
+
+export function setDraft(translation) {
+  liveDraft = translation || '';
+  renderLive();
+}
+
+function renderLive() {
+  if (!liveSource && !liveDraft) {
     el.live.hidden = true;
-    el.live.textContent = '';
+    el.live.replaceChildren();
     return;
   }
+
   el.live.hidden = false;
-  el.live.textContent = text;
+  el.live.replaceChildren();
+
+  if (liveDraft) {
+    const vi = document.createElement('div');
+    vi.className = 'live-vi';
+    vi.textContent = liveDraft;
+    el.live.append(vi);
+  }
+
+  if (liveSource) {
+    const en = document.createElement('div');
+    en.className = 'live-en';
+    en.textContent = liveSource;
+    el.live.append(en);
+  }
+
   if (autoScroll) scrollToEnd();
 }
 
@@ -118,6 +153,7 @@ export function clearLines() {
   lines.length = 0;
   el.transcript.querySelectorAll('.line').forEach((n) => n.remove());
   el.empty.hidden = false;
+  liveDraft = '';
   setInterim('');
 }
 

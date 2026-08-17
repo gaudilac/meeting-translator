@@ -31,7 +31,8 @@ const state = {
   wakeLock: null,
   running: false,
   fontSize: localStorage.getItem('mt.font') || 'medium',
-  showSource: localStorage.getItem('mt.source') !== 'off'
+  showSource: localStorage.getItem('mt.source') !== 'off',
+  draftInterval: Number(localStorage.getItem('mt.draftInterval') ?? 1200)
 };
 
 // ------------------------------------------------------------------ khởi tạo
@@ -66,6 +67,32 @@ function applyPreferences() {
   ui.el.btnFont.textContent = 'Cỡ chữ: ' + labels[state.fontSize];
   ui.el.btnSource.setAttribute('aria-pressed', String(state.showSource));
   ui.el.btnSource.textContent = state.showSource ? 'Hiện tiếng Anh' : 'Ẩn tiếng Anh';
+
+  ui.el.inpDraft.value = String(state.draftInterval);
+  renderDraftSetting();
+}
+
+// Nói rõ đánh đổi ngay tại thanh trượt: nhịp càng dày thì càng mượt
+// nhưng càng tốn tiền, và người dùng là người trả tiền cho API.
+function renderDraftSetting() {
+  const ms = state.draftInterval;
+
+  if (ms === 0) {
+    ui.el.draftLabel.textContent = 'tắt';
+    ui.el.draftNote.textContent =
+      'Chỉ dịch khi người nói dứt câu. Rẻ nhất, nhưng tiếng Việt hiện thành từng cục.';
+    return;
+  }
+
+  ui.el.draftLabel.textContent = 'mỗi ' + (ms / 1000).toFixed(1).replace('.', ',') + ' giây';
+
+  if (ms <= 800) {
+    ui.el.draftNote.textContent = 'Rất mượt, gần như phiên dịch thật. Tốn API nhất — dễ chạm hạn mức gói miễn phí.';
+  } else if (ms <= 1600) {
+    ui.el.draftNote.textContent = 'Cân bằng giữa độ mượt và chi phí. Phù hợp cho hầu hết cuộc họp.';
+  } else {
+    ui.el.draftNote.textContent = 'Tiết kiệm API, tiếng Việt cập nhật chậm và giật hơn.';
+  }
 }
 
 // ------------------------------------------------------------------ sự kiện
@@ -104,6 +131,13 @@ function bindEvents() {
     state.fontSize = order[(order.indexOf(state.fontSize) + 1) % order.length];
     localStorage.setItem('mt.font', state.fontSize);
     applyPreferences();
+  });
+
+  ui.el.inpDraft.addEventListener('input', () => {
+    state.draftInterval = Number(ui.el.inpDraft.value);
+    localStorage.setItem('mt.draftInterval', String(state.draftInterval));
+    state.queue?.setDraftInterval(state.draftInterval);
+    renderDraftSetting();
   });
 
   ui.el.btnExport.addEventListener('click', exportTranscript);
@@ -158,9 +192,14 @@ async function start(source) {
   });
 
   state.queue = new TranslationQueue(state.conn, {
+    draftIntervalMs: state.draftInterval,
     onResult: ({ source: src, translation, stats }) => {
       ui.setInterim('');
       ui.addLine({ source: src, translation });
+      ui.updateUsage(stats);
+    },
+    onDraft: ({ translation, stats }) => {
+      ui.setDraft(translation);
       ui.updateUsage(stats);
     },
     onError: (err, text) => {
@@ -194,7 +233,10 @@ async function start(source) {
 
 function startRecognizer() {
   state.recognizer = new Recognizer({
-    onInterim: (text) => ui.setInterim(text),
+    onInterim: (text) => {
+      ui.setInterim(text);
+      state.queue.pushDraft(text);
+    },
     onFinal: (text) => {
       ui.setInterim('');
       state.queue.push(text);

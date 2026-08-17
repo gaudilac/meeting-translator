@@ -110,6 +110,21 @@ Vào **Settings → Pages**, chọn nhánh `main` và thư mục `/ (root)`. Kh�
 
 Thanh công cụ dưới cùng: tạm dừng tự cuộn để đọc lại, ẩn/hiện tiếng Anh gốc, đổi cỡ chữ, tải transcript về dạng Markdown.
 
+### Dịch nháp khi đang nói
+
+Tiếng Việt hiện **ngay lúc người ta còn đang nói**, dạng chữ mờ nghiêng, và tự sửa lại liên tục khi nghe thêm được từ mới. Khi người nói dứt câu, bản dịch chốt thay thế bản nháp tại chỗ với văn phong hoàn chỉnh hơn.
+
+Nhịp dịch nháp chỉnh bằng thanh trượt trong ⚙ **Cài đặt**:
+
+| Nhịp | Cảm giác | Chi phí |
+|---|---|---|
+| Tắt | Chỉ dịch khi dứt câu, tiếng Việt hiện thành từng cục | Rẻ nhất |
+| 0,6 giây | Rất mượt, gần như phiên dịch thật | Tốn nhất, dễ chạm hạn mức free |
+| **1,2 giây** (mặc định) | Cân bằng, hợp hầu hết cuộc họp | Khoảng 2–3× so với tắt |
+| 2,5 giây | Cập nhật chậm và giật hơn | Khoảng 1,5× |
+
+Mỗi bản nháp là một lời gọi API và **có tính tiền**. Nếu dùng gói miễn phí cho cuộc họp dài, để nhịp thưa hoặc tắt hẳn.
+
 ---
 
 ## Những điều cần biết trước khi dùng

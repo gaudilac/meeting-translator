@@ -264,13 +264,32 @@ body[data-source="off"] .line .en { display: none; }
 }
 
 .live {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
   padding: 10px 14px;
   border-radius: var(--radius);
   background: var(--surface-2);
+  border-left: 3px solid color-mix(in srgb, var(--accent) 55%, transparent);
+}
+
+/* Bản dịch nháp: cùng cỡ chữ với bản chốt để lúc chốt không bị nhảy layout,
+   nhưng mờ và nghiêng để thấy rõ đây là bản chưa hoàn chỉnh. */
+.live-vi {
+  font-size: var(--fs-target);
+  font-weight: 500;
+  line-height: 1.45;
+  color: color-mix(in srgb, var(--text) 70%, transparent);
+  font-style: italic;
+}
+
+.live-en {
+  font-size: var(--fs-source);
   color: var(--muted);
   font-style: italic;
-  font-size: var(--fs-source);
 }
+
+body[data-source="off"] .live-en { display: none; }
 
 /* -------------------------------------------------------------- toolbar */
 
@@ -367,6 +386,20 @@ code {
 }
 
 .field input:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+.field input[type="range"] {
+  padding: 0;
+  border: none;
+  background: transparent;
+  accent-color: var(--accent);
+}
+
+.field-note {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--muted);
+  min-height: 2.2em;
+}
 
 .test-row { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 

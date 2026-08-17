@@ -113,11 +113,24 @@ Chỉ dùng đường gửi audio lên Gemini khi Web Speech API không khả d�
 ### 4.2 Luồng dịch streaming
 
 1. `SpeechRecognition` với `continuous = true`, `interimResults = true`, `lang = 'en-US'`.
-2. Kết quả **interim** → hiện ngay ở dòng đang chạy (màu nhạt, chữ nghiêng), **không gọi API**.
-3. Kết quả **final** → đẩy vào hàng đợi dịch.
-4. **Gộp câu thông minh:** chờ 400ms; nếu có câu final mới tới trong lúc chờ thì gộp lại thành một request. Tránh gọi API cho từng mẩu 2–3 chữ.
-5. Nhận bản dịch → thay dòng interim bằng cặp song ngữ hoàn chỉnh.
-6. **Giữ ngữ cảnh:** gửi kèm 2–3 câu đã dịch trước đó để AI dịch đúng đại từ và thuật ngữ nối tiếp. Không gửi cả transcript (tốn token vô ích).
+2. Kết quả **interim** → hiện ngay tiếng Anh ở dòng đang chạy, đồng thời gửi đi **dịch nháp** theo nhịp giới hạn (mặc định 1,2 giây, chỉnh được bằng thanh trượt, đặt 0 để tắt).
+3. Bản dịch nháp hiện mờ/nghiêng ngay trên dòng tiếng Anh, **cùng cỡ chữ với bản chốt** để lúc chốt không nhảy layout.
+4. Kết quả **final** → đẩy vào hàng đợi dịch; bản chốt thay thế bản nháp tại chỗ.
+5. **Gộp câu thông minh:** chờ 400ms; nếu có câu final mới tới trong lúc chờ thì gộp lại thành một request. Tránh gọi API cho từng mẩu 2–3 chữ.
+6. Nhận bản dịch → thay dòng interim bằng cặp song ngữ hoàn chỉnh.
+7. **Giữ ngữ cảnh:** gửi kèm 2–3 câu đã dịch trước đó để AI dịch đúng đại từ và thuật ngữ nối tiếp. Không gửi cả transcript (tốn token vô ích).
+
+### 4.2.1 Quy tắc bắt buộc của luồng dịch nháp
+
+Luồng nháp chạy song song luồng chốt và **luôn nhường đường**:
+
+- Bỏ qua nếu chuỗi ngắn hơn 8 ký tự, chưa đổi so với lần trước, hoặc chưa tới nhịp.
+- Bỏ qua nếu luồng chốt đang chạy hoặc một bản nháp khác đang bay — bản chuẩn quan trọng hơn.
+- Đánh số thứ tự mỗi bản nháp; kết quả về trễ hơn lần chốt gần nhất thì **vứt bỏ**, nếu không nó sẽ ghi đè bản chuẩn.
+- Bản nháp lỗi thì im lặng bỏ qua (bản chốt sẽ tới sau và đúng hơn), riêng `429` vẫn phải tôn trọng để không đào sâu rate limit.
+- Bản nháp chỉ gửi kèm 2 câu ngữ cảnh thay vì 3, vì nó gọi thường xuyên hơn.
+
+**Chi phí:** mỗi bản nháp là một request. Nhịp 1,2 giây làm chi phí tăng khoảng 2–3 lần so với chỉ dịch câu chốt. Thanh trượt phải nói rõ đánh đổi này ngay tại chỗ, không giấu trong tài liệu.
 
 ### 4.3 Xử lý lỗi bắt buộc
 
