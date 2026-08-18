@@ -2,7 +2,8 @@
  * Meeting Translator — proxy Gemini API chạy trong tài khoản Google của bạn.
  *
  * CÀI ĐẶT (làm một lần):
- *   1. Chạy setup()      → dán Gemini API key khi được hỏi
+ *   1. Dán key vào Project Settings > Script Properties (GEMINI_API_KEY),
+ *      rồi chạy setup()
  *   2. Deploy > New deployment > Web app
  *        Execute as:      Me
  *        Who has access:  Anyone          ← bắt buộc, xem README
@@ -39,29 +40,61 @@ var API_BASE = 'https://generativelanguage.googleapis.com/v1beta/models/';
 // ---------------------------------------------------------------- cài đặt
 
 /**
- * BƯỚC 1 — thay DÁN_API_KEY_VÀO_ĐÂY bằng key thật của bạn rồi bấm Run.
+ * BƯỚC 1 — dán key vào Script Properties, rồi bấm Run hàm này.
  *
- * Lấy key tại https://aistudio.google.com/apikey
- * Giữ nguyên hai dấu nháy, chỉ thay phần chữ bên trong.
+ *   1. Lấy key tại https://aistudio.google.com/apikey
+ *   2. Trong Apps Script editor, mở ⚙ Project Settings (cột trái)
+ *   3. Kéo xuống "Script Properties" > "Add script property"
+ *        Property : GEMINI_API_KEY
+ *        Value    : (dán key vào đây)
+ *      Bấm "Save script properties"
+ *   4. Quay lại Editor, chọn setup() rồi bấm Run
  *
- * Sau khi chạy thành công, xoá key khỏi dòng này — key đã được lưu an toàn
- * trong UserProperties, để lại trong code chỉ thêm rủi ro lộ.
+ * Key nằm trong ô nhập của Google, không bao giờ đi qua file này — chia sẻ
+ * hay commit code đều không lộ key.
+ *
+ * setup() sẽ kiểm tra key với Google, chuyển key sang UserProperties (nơi
+ * script đọc lúc chạy), rồi xoá khỏi Script Properties để key không hiện lại
+ * trong Project Settings cho người khác đọc.
  */
 function setup() {
-  setKey('DÁN_API_KEY_VÀO_ĐÂY');
+  var script = PropertiesService.getScriptProperties();
+  var pasted = script.getProperty(P_KEY);
+
+  if (!pasted || !pasted.trim()) {
+    throw new Error(
+      'Chưa thấy key trong Script Properties.\n\n' +
+      'Mở ⚙ Project Settings > Script Properties > Add script property\n' +
+      '  Property : ' + P_KEY + '\n' +
+      '  Value    : key lấy từ https://aistudio.google.com/apikey\n' +
+      'Bấm "Save script properties", quay lại Editor rồi Run setup() lần nữa.'
+    );
+  }
+
+  setKey(pasted);
+
+  // Key đã nằm an toàn trong UserProperties. Xoá bản trong Script Properties
+  // vì ô đó ai mở được project là đọc được.
+  script.deleteProperty(P_KEY);
+
   showSetup();
 }
 
-/** Đặt hoặc đổi API key. */
+/**
+ * Đặt hoặc đổi API key.
+ *
+ * Cách dùng thông thường là setup() — key đi qua Script Properties nên không
+ * chạm vào code. Chỉ gọi thẳng setKey('...') khi cần đổi key nhanh, và nhớ
+ * xoá dòng vừa gõ sau khi chạy.
+ */
 function setKey(apiKey) {
   var key = String(apiKey == null ? '' : apiKey).trim();
 
-  if (!key || key === 'DÁN_API_KEY_VÀO_ĐÂY') {
+  if (!key) {
     throw new Error(
-      'Dòng setKey() vẫn đang là chỗ giữ chỗ, chưa phải key thật.\n\n' +
-      'Nếu bạn ĐÃ dán key mà vẫn thấy lỗi này, gần như chắc chắn là editor chưa lưu:\n' +
-      '  1. Bấm Ctrl+S (hoặc Cmd+S) để lưu file\n' +
-      '  2. Tải lại trang bằng F5 rồi Run lại\n\n' +
+      'Key rỗng.\n\n' +
+      'Chạy setup() sau khi đã dán key vào Script Properties,\n' +
+      'hoặc gọi setKey(\'key-cua-ban\') với key thật.\n\n' +
       'Lấy key tại: https://aistudio.google.com/apikey'
     );
   }
@@ -266,15 +299,29 @@ function doPost(e) {
       });
     }
 
+    // Dịch miễn phí bằng LanguageApp: không cần API key, không tính vào hạn mức
+    // Gemini. Đặt trước cả check key để chế độ miễn phí chạy được ngay cả khi
+    // người dùng chưa từng nạp key.
+    if (action === 'translateFree') return translateFree_(req);
+
     var apiKey = props.getProperty(P_KEY);
     if (!apiKey) {
       return fail_('NO_API_KEY', 'Chưa có Gemini API key. Chạy setup() trong Apps Script editor.');
     }
 
+    // listModels và setModel không gọi generateContent nên không đụng tới hạn
+    // mức dịch — để trước rate limit, nếu không nút refresh sẽ ăn oan một lượt.
+    if (action === 'listModels') return listModels_(apiKey);
+    if (action === 'setModel') {
+      var chosen = sanitizeModel_(req.model);
+      if (!chosen) return fail_('BAD_REQUEST', 'Tên model không hợp lệ.');
+      props.setProperty(P_MODEL, chosen);
+      return ok_({ model: chosen });
+    }
+
     var limited = checkRateLimit_(props);
     if (limited) return limited;
 
-    if (action === 'listModels') return listModels_(apiKey);
     if (action === 'translate') return translate_(req, apiKey, props);
     if (action === 'transcribeAndTranslate') return transcribe_(req, apiKey, props);
 
@@ -292,6 +339,33 @@ function doGet() {
 
 // ---------------------------------------------------------------- hành động
 
+/**
+ * Dịch bằng Google Translate qua LanguageApp — miễn phí, không dùng API key.
+ *
+ * Chất lượng thấp hơn Gemini: dịch từng câu rời, không có ngữ cảnh câu trước,
+ * văn phong máy. Đổi lại không tốn tiền và nhanh hơn. Người dùng bấm nút Gemini
+ * trên từng dòng khi cần bản dịch tốt hơn.
+ */
+function translateFree_(req) {
+  var text = String(req.text || '').trim();
+  if (!text) return fail_('BAD_REQUEST', 'Không có nội dung để dịch.');
+  if (text.length > MAX_TEXT_CHARS) {
+    return fail_('TOO_LARGE', 'Đoạn văn quá dài (' + text.length + ' ký tự, tối đa ' + MAX_TEXT_CHARS + ').');
+  }
+
+  var out;
+  try {
+    out = LanguageApp.translate(text, 'en', 'vi');
+  } catch (e) {
+    // Hạn mức LanguageApp riêng của Apps Script, tách khỏi hạn mức Gemini.
+    return fail_('FREE_LIMIT',
+      'Google Translate trong Apps Script đã hết hạn mức hôm nay hoặc tạm lỗi. ' +
+      'Chuyển sang chế độ Gemini, hoặc thử lại sau.');
+  }
+
+  return ok_({ translation: String(out || '').trim(), source: text, engine: 'free', usage: { in: 0, out: 0 } });
+}
+
 function translate_(req, apiKey, props) {
   var text = String(req.text || '').trim();
   if (!text) return fail_('BAD_REQUEST', 'Không có nội dung để dịch.');
@@ -299,7 +373,9 @@ function translate_(req, apiKey, props) {
     return fail_('TOO_LARGE', 'Đoạn văn quá dài (' + text.length + ' ký tự, tối đa ' + MAX_TEXT_CHARS + ').');
   }
 
-  var model = props.getProperty(P_MODEL) || MODEL_DEFAULT;
+  // Cho phép web chỉ định model cho riêng request này (người dùng chọn trong
+  // bảng model). Không có thì dùng model đã lưu.
+  var model = sanitizeModel_(req.model) || props.getProperty(P_MODEL) || MODEL_DEFAULT;
   var payload = {
     system_instruction: { parts: [{ text: buildSystemPrompt_() }] },
     contents: [{ role: 'user', parts: [{ text: buildUserPrompt_(text, req.context) }] }],
@@ -325,7 +401,7 @@ function transcribe_(req, apiKey, props) {
     return fail_('TOO_LARGE', 'Đoạn âm thanh quá lớn (' + Math.round(approxBytes / 1048576) + 'MB, tối đa 8MB).');
   }
 
-  var model = props.getProperty(P_MODEL) || MODEL_DEFAULT;
+  var model = sanitizeModel_(req.model) || props.getProperty(P_MODEL) || MODEL_DEFAULT;
   var payload = {
     system_instruction: { parts: [{ text: buildSystemPrompt_() }] },
     contents: [{
@@ -349,6 +425,23 @@ function transcribe_(req, apiKey, props) {
   });
 }
 
+/**
+ * Chỉ nhận tên model hợp lệ. Tên đi thẳng vào URL gọi Google nên không thể
+ * tin dữ liệu từ client — chặn ký tự lạ thay vì encode rồi hy vọng.
+ */
+function sanitizeModel_(name) {
+  var m = String(name == null ? '' : name).trim();
+  if (!m || m.length > 80) return '';
+  return /^[a-zA-Z0-9._-]+$/.test(m) ? m : '';
+}
+
+/**
+ * Danh sách model mà API key này thực sự dùng được.
+ *
+ * Google KHÔNG trả về đơn giá ở đây — không có API giá công khai. Web tự ghép
+ * giá từ bảng nhúng sẵn của nó, model nào không có trong bảng thì hiện
+ * "chưa rõ giá" thay vì đoán.
+ */
 function listModels_(apiKey) {
   var url = 'https://generativelanguage.googleapis.com/v1beta/models?key=' + encodeURIComponent(apiKey);
   var resp = UrlFetchApp.fetch(url, { method: 'get', muteHttpExceptions: true });
@@ -359,13 +452,24 @@ function listModels_(apiKey) {
 
   var models = (JSON.parse(resp.getContentText()).models || [])
     .filter(function (m) {
-      return (m.supportedGenerationMethods || []).indexOf('generateContent') >= 0;
+      var methods = m.supportedGenerationMethods || [];
+      if (methods.indexOf('generateContent') < 0) return false;
+      var n = String(m.name).replace('models/', '');
+      // Model sinh ảnh/giọng nói không dùng để dịch được.
+      return n.indexOf('tts') < 0 && n.indexOf('image') < 0 && n.indexOf('embedding') < 0;
     })
     .map(function (m) {
-      return { name: String(m.name).replace('models/', ''), label: m.displayName || m.name };
+      return {
+        name: String(m.name).replace('models/', ''),
+        label: m.displayName || String(m.name).replace('models/', ''),
+        description: m.description || '',
+        inputLimit: m.inputTokenLimit || 0,
+        outputLimit: m.outputTokenLimit || 0
+      };
     });
 
-  return ok_({ models: models });
+  var props = PropertiesService.getUserProperties();
+  return ok_({ models: models, current: props.getProperty(P_MODEL) || MODEL_DEFAULT });
 }
 
 // ---------------------------------------------------------------- Gemini

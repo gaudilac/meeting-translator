@@ -81,14 +81,23 @@ export function listModels(conn) {
   return post(conn, { action: 'listModels' });
 }
 
-export function translate(conn, text, context) {
-  return post(conn, { action: 'translate', text, context });
+export function setModel(conn, model) {
+  return post(conn, { action: 'setModel', model });
 }
 
-export function transcribeAndTranslate(conn, audioBase64, mimeType, context) {
+export function translate(conn, text, context, model) {
+  return post(conn, { action: 'translate', text, context, model });
+}
+
+/** Dịch miễn phí qua LanguageApp — không dùng API key, không tốn tiền. */
+export function translateFree(conn, text) {
+  return post(conn, { action: 'translateFree', text }, { timeoutMs: 20000 });
+}
+
+export function transcribeAndTranslate(conn, audioBase64, mimeType, context, model) {
   return post(
     conn,
-    { action: 'transcribeAndTranslate', audio: audioBase64, mimeType, context },
+    { action: 'transcribeAndTranslate', audio: audioBase64, mimeType, context, model },
     { timeoutMs: 60000 }
   );
 }
@@ -98,7 +107,7 @@ export function transcribeAndTranslate(conn, audioBase64, mimeType, context) {
  * retry với backoff, và tự giãn nhịp khi chạm rate limit.
  */
 export class TranslationQueue {
-  constructor(conn, { onResult, onDraft, onPending, onError, onStateChange, mergeWindowMs = 400, draftIntervalMs = 1200 }) {
+  constructor(conn, { onResult, onDraft, onPending, onError, onStateChange, mergeWindowMs = 400, draftIntervalMs = 1200, engine = 'free', model = null, stats = null }) {
     this.conn = conn;
     this.onResult = onResult;
     this.onDraft = onDraft || (() => {});
@@ -107,13 +116,17 @@ export class TranslationQueue {
     this.onStateChange = onStateChange || (() => {});
     this.mergeWindowMs = mergeWindowMs;
     this.draftIntervalMs = draftIntervalMs;
+    this.engine = engine;
+    this.model = model;
 
     this.pending = [];
     this.mergeTimer = null;
     this.running = false;
     this.context = [];
     this.throttleUntil = 0;
-    this.stats = { requests: 0, tokensIn: 0, tokensOut: 0 };
+    // Dùng chung đối tượng stats với app.js nếu được truyền vào, để lượt dịch
+    // lại ngoài phiên cũng cộng vào cùng một đồng hồ.
+    this.stats = stats || { requests: 0, tokensIn: 0, tokensOut: 0, freeRequests: 0 };
 
     // Luồng dịch nháp: chạy song song, luôn nhường đường cho luồng chốt câu.
     this.draftRunning = false;
@@ -128,6 +141,31 @@ export class TranslationQueue {
 
   setDraftInterval(ms) {
     this.draftIntervalMs = ms;
+  }
+
+  setEngine(engine) {
+    this.engine = engine;
+  }
+
+  setModel(model) {
+    this.model = model;
+  }
+
+  /** Gọi đúng máy dịch đang chọn. Chế độ miễn phí không có ngữ cảnh câu trước. */
+  callTranslate(text, context) {
+    return this.engine === 'free'
+      ? translateFree(this.conn, text)
+      : translate(this.conn, text, context, this.model);
+  }
+
+  countUsage(res) {
+    this.stats.requests += 1;
+    if (res.engine === 'free') {
+      this.stats.freeRequests += 1;
+    } else {
+      this.stats.tokensIn += res.usage?.in || 0;
+      this.stats.tokensOut += res.usage?.out || 0;
+    }
   }
 
   /**
@@ -157,13 +195,11 @@ export class TranslationQueue {
     const seq = ++this.draftSeq;
 
     try {
-      const res = await translate(this.conn, text, this.context.slice(-2));
+      const res = await this.callTranslate(text, this.context.slice(-2));
 
       // Bỏ kết quả đã cũ: câu có thể đã được chốt trong lúc chờ mạng.
       if (seq === this.draftSeq && !this.running) {
-        this.stats.requests += 1;
-        this.stats.tokensIn += res.usage?.in || 0;
-        this.stats.tokensOut += res.usage?.out || 0;
+        this.countUsage(res);
         this.onDraft({ source: text, translation: res.translation, stats: this.stats });
       }
     } catch (err) {
@@ -213,23 +249,27 @@ export class TranslationQueue {
 
     for (let attempt = 0; attempt < 3; attempt++) {
       try {
-        const res = await translate(this.conn, text, this.context.slice(-3));
+        const res = await this.callTranslate(text, this.context.slice(-3));
 
         this.context.push(res.translation);
         if (this.context.length > 6) this.context.shift();
 
-        this.stats.requests += 1;
-        this.stats.tokensIn += res.usage?.in || 0;
-        this.stats.tokensOut += res.usage?.out || 0;
+        this.countUsage(res);
 
-        this.onResult({ ticket, source: res.source || text, translation: res.translation, stats: this.stats });
+        this.onResult({
+          ticket,
+          source: res.source || text,
+          translation: res.translation,
+          engine: res.engine === 'free' ? 'free' : 'gemini',
+          stats: this.stats
+        });
         lastError = null;
         break;
       } catch (err) {
         lastError = err;
 
         // Lỗi cấu hình: retry vô nghĩa, dừng ngay.
-        if (['UNAUTHORIZED', 'NO_API_KEY', 'BAD_DEPLOY', 'TOO_LARGE', 'BAD_REQUEST'].includes(err.code)) {
+        if (['UNAUTHORIZED', 'NO_API_KEY', 'BAD_DEPLOY', 'TOO_LARGE', 'BAD_REQUEST', 'FREE_LIMIT'].includes(err.code)) {
           break;
         }
 
@@ -259,6 +299,8 @@ export class TranslationQueue {
     this.draftSeq++;
     this.draftLastText = '';
     this.draftLastAt = 0;
+    // Sửa tại chỗ, không gán đối tượng mới — app.js đang giữ cùng tham chiếu này.
+    Object.assign(this.stats, { requests: 0, tokensIn: 0, tokensOut: 0, freeRequests: 0 });
   }
 }
 

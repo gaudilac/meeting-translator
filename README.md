@@ -4,6 +4,8 @@
 
 Web phiên dịch hội thoại tiếng Anh sang tiếng Việt gần thời gian thực, dùng cho cuộc họp trực tuyến.
 
+**Mặc định chạy hoàn toàn miễn phí.** Câu nào cần chính xác hơn thì bấm ◈ để Gemini dịch lại — chỉ trả tiền cho đúng những câu đó.
+
 API key Gemini nằm trong Google Apps Script thuộc **tài khoản Google của chính bạn**. Trang web không nhận, không lưu và không gửi key đi bất cứ đâu — kể cả tới tác giả.
 
 ---
@@ -11,12 +13,40 @@ API key Gemini nằm trong Google Apps Script thuộc **tài khoản Google củ
 ## Cách hoạt động
 
 ```
-Trình duyệt ──POST + token──► Apps Script của bạn ──API key──► Google Gemini
-   mic / tab audio                (proxy cá nhân)                (dịch)
+Trình duyệt ──POST + token──► Apps Script của bạn ──┬── LanguageApp  (miễn phí)
+   mic / tab audio                (proxy cá nhân)   └── Gemini API   (tính tiền)
 ```
 
-- **Micro** — dùng Web Speech API có sẵn trong Chrome để nhận dạng tiếng Anh **miễn phí**, chỉ trả tiền cho phần dịch text. Độ trễ khoảng 1–3 giây.
-- **Âm thanh tab** — ghi thành đoạn 6 giây và gửi lên Gemini nhận dạng + dịch. Độ trễ khoảng 6–10 giây. Chỉ chạy trên Chrome/Edge máy tính.
+### Hai máy dịch
+
+| | Miễn phí | Gemini |
+|---|---|---|
+| Chạy bằng | `LanguageApp` (Google Translate) trong Apps Script | Gemini API bằng key của bạn |
+| Chi phí | Không tốn đồng nào | Tính theo token |
+| Ngữ cảnh câu trước | Không | Có |
+| Chất lượng | Dịch máy từng câu rời | Văn phong hội họp tự nhiên |
+| Hạn mức | ~5.000 lượt/ngày (hạn mức Apps Script) | Theo quota Gemini của bạn |
+
+Đổi máy dịch bằng công tắc **Miễn phí / Gemini** ngay dưới nút chạy. Mỗi dòng transcript có một vạch màu bên trái: **hổ phách** = dịch miễn phí, **lam** = Gemini đã chốt.
+
+### Hai nguồn âm thanh
+
+- **Micro** — dùng Web Speech API có sẵn trong Chrome để nhận dạng tiếng Anh **miễn phí**. Kết hợp với chế độ dịch miễn phí thì toàn bộ cuộc họp không tốn một đồng API nào. Độ trễ khoảng 1–3 giây.
+- **Âm thanh tab** — ghi thành đoạn 6 giây và gửi lên Gemini nhận dạng + dịch. **Đường này luôn tính tiền** kể cả khi đang để chế độ miễn phí, vì Google Translate không nhận dạng được giọng nói. Độ trễ khoảng 6–10 giây. Chỉ chạy trên Chrome/Edge máy tính.
+
+### Dịch lại từng câu
+
+Rê chuột lên một dòng (hoặc chạm trên điện thoại) sẽ hiện nút **◈** trong vạch màu bên trái. Bấm vào đó, Gemini dịch lại đúng câu ấy kèm ngữ cảnh ba câu trước — dòng nháy nhẹ một cái rồi đổi vạch sang màu lam. Dòng đã chốt bằng Gemini thì nút biến mất, tránh bấm lại tốn tiền vô ích.
+
+### Chọn model và xem đơn giá
+
+Trong ⚙ **Cài đặt** có bảng **Model Gemini**. Bấm **Tải lại danh sách** để lấy đúng những model mà API key của bạn dùng được, kèm đơn giá vào/ra trên 1 triệu token.
+
+> ⚠️ **Google không có API giá công khai.** `listModels` chỉ trả về tên model và giới hạn token, không có giá. Đơn giá trong bảng là số **chép tay** trong [`pricing.js`](pricing.js), có ghi tháng cập nhật ngay cạnh tiêu đề. Model nào không có trong bảng thì hiện **"chưa rõ giá"** thay vì đoán theo tên.
+>
+> Google đổi giá thì bấm **Sửa đơn giá** để tự nhập (lưu trong trình duyệt), hoặc sửa thẳng `pricing.js`. Đối chiếu tại [ai.google.dev/pricing](https://ai.google.dev/pricing).
+
+Đồng hồ trên thanh trạng thái đếm riêng ba số: lượt **miễn phí**, lượt **Gemini**, và **chi phí** ước tính bằng USD.
 
 ---
 
@@ -34,16 +64,16 @@ Vào [aistudio.google.com/apikey](https://aistudio.google.com/apikey), tạo key
 
 ### 3. Nạp API key
 
-Ở đầu file, sửa hàm `setup()` — dán key của bạn vào giữa hai dấu nháy:
+Key không bao giờ nằm trong code. Dán key vào ô nhập của Google:
 
-```javascript
-function setup() {
-  setKey('AIza...key-của-bạn...');
-  showSetup();
-}
-```
+1. Trong Apps Script editor, mở **⚙ Project Settings** ở cột trái
+2. Kéo xuống **Script Properties** → **Add script property**
+   - Property: `GEMINI_API_KEY`
+   - Value: key lấy ở bước 1
+3. Bấm **Save script properties**
+4. Quay lại **Editor**, chọn hàm `setup` trong thanh công cụ rồi bấm **Run**
 
-Chọn hàm `setup` trong thanh công cụ rồi bấm **Run**. Xong thì xoá key khỏi dòng đó — key đã được lưu trong UserProperties, để lại trong code chỉ thêm rủi ro lộ.
+`setup()` kiểm tra key với Google, chuyển sang UserProperties (nơi script đọc lúc chạy), rồi tự xoá khỏi Script Properties — nên key cũng không nằm lại trong màn hình Project Settings.
 
 Lần chạy đầu Google sẽ hỏi quyền — chọn tài khoản, bấm **Advanced** → **Go to ... (unsafe)** → **Allow**. Cảnh báo này xuất hiện vì script chưa được Google xét duyệt; đây là script của chính bạn nên không có bên thứ ba nào truy cập được.
 
@@ -153,7 +183,11 @@ Mỗi bản nháp là một lời gọi API và **có tính tiền**. Nếu dùn
 
 Đây là các đánh đổi thật, không giấu:
 
-**Nội dung cuộc họp được gửi tới Google Gemini.** Đây là điều kiện để dịch được. Không dùng công cụ này cho cuộc họp có thông tin mật, dữ liệu khách hàng hay nội dung thuộc diện bảo mật.
+**Nội dung cuộc họp được gửi tới Google.** Chế độ miễn phí gửi qua Google Translate, chế độ Gemini gửi qua Gemini API. Không dùng công cụ này cho cuộc họp có thông tin mật, dữ liệu khách hàng hay nội dung thuộc diện bảo mật.
+
+**Chế độ micro còn gửi âm thanh tới dịch vụ nhận dạng giọng nói của Google** qua Web Speech API của Chrome. Đường này do trình duyệt thực hiện, không đi qua Apps Script của bạn và nằm ngoài tầm kiểm soát của proxy.
+
+**Đơn giá hiển thị là số chép tay, không lấy trực tiếp từ Google.** Google không có API giá. Con số chi phí trên thanh trạng thái là **ước tính** — kiểm tra hoá đơn thật trong Google Cloud Console, đừng dựa vào nó để quyết toán.
 
 **Token lưu trong `localStorage` của trình duyệt.** Nó bảo vệ bạn khỏi người lạ trên Internet tình cờ biết URL, nhưng không bảo vệ khỏi người dùng chung máy hoặc mã độc chạy trong trình duyệt. Nghi ngờ lộ thì chạy `rotateToken()` trong Apps Script và dán token mới vào web.
 
@@ -173,7 +207,8 @@ Chạy trong Apps Script editor:
 
 | Hàm | Tác dụng |
 |---|---|
-| `setKey("AIza...")` | Đổi API key |
+| `setup()` | Nạp key mới từ Script Properties (cách khuyến nghị) |
+| `setKey("AIza...")` | Đổi API key nhanh — nhớ xoá dòng vừa gõ sau khi chạy |
 | `setModel("gemini-2.0-flash")` | Đổi model dịch |
 | `setLimits(60, 1000)` | Đổi hạn mức: 60 request/phút, 1000/ngày |
 | `rotateToken()` | Sinh token mới (phải dán lại vào web) |
@@ -188,7 +223,7 @@ Chạy trong Apps Script editor:
 |---|---|
 | "Script trả về HTML thay vì dữ liệu" | Deploy sai quyền. Deploy lại với **Who has access = Anyone** |
 | "Token không đúng" | Chạy `showSetup()` lấy token hiện tại, dán lại vào web |
-| "Chưa có Gemini API key" | Chạy `setKey("AIza...")` trong editor |
+| "Chưa có Gemini API key" | Dán key vào Script Properties rồi chạy `setup()` (xem bước 3) |
 | "Tab được chọn không kèm âm thanh" | Chọn lại tab và bật ô chia sẻ âm thanh |
 | Phụ đề dừng sau khoảng một phút | Đã xử lý tự khởi động lại. Nếu vẫn dừng, kiểm tra kết nối mạng |
 | Nút "Nghe từ tab họp" bị mờ | Đang dùng điện thoại hoặc trình duyệt không hỗ trợ. Dùng micro thay thế |
@@ -197,6 +232,10 @@ Chạy trong Apps Script editor:
 | Vẫn báo "chưa thay chỗ giữ chỗ" dù đã dán key | Editor chưa lưu file. Bấm **Ctrl+S** (hoặc Cmd+S), tải lại trang bằng **F5**, rồi Run lại |
 | "This model is currently experiencing high demand" | Google đang quá tải — sự cố tạm thời, không phải lỗi key. Script tự đổi model và thử lại; nếu vẫn lỗi, chờ vài phút |
 | "no longer available to new users" | Model thế hệ cũ không còn cấp cho key mới. Script tự chuyển sang model mới hơn |
+| "Google Translate ... hết hạn mức hôm nay" | Chạm hạn mức `LanguageApp` của Apps Script (~5.000 lượt/ngày). Bấm **Chuyển sang Gemini** trong thông báo, hoặc chờ sang ngày mới |
+| Model hiện "chưa rõ giá" | Model đó chưa có trong bảng giá chép tay. Bấm **Sửa đơn giá** để tự nhập, hoặc bổ sung vào `pricing.js` |
+| Chi phí hiện "—" | Chưa chọn model. Mở ⚙ → **Tải lại danh sách** rồi chọn một model |
+| Nút ◈ không hiện trên dòng | Dòng đó đã dịch bằng Gemini rồi nên không cho gọi lại. Vạch bên trái màu lam là dấu hiệu |
 
 ---
 
@@ -212,7 +251,8 @@ Meeting_Translator/
 ├── audio.js           # Thu micro / tab audio
 ├── recognizer.js      # Web Speech API + tự khởi động lại
 ├── gasClient.js       # Gọi script, hàng đợi, retry
-├── ui.js              # Render phụ đề
+├── pricing.js         # Bảng giá chép tay + tính chi phí
+├── ui.js              # Render phụ đề, đồng hồ chi phí, bảng model
 └── gas/
     └── Code.gs        # Proxy Apps Script (một file, copy một lần)
 ```

@@ -18,10 +18,14 @@ import {
   saveConnection,
   clearConnection,
   ping,
+  translate,
+  listModels,
+  setModel as saveModel,
   transcribeAndTranslate,
   TranslationQueue,
   GasError
 } from './gasClient.js';
+import { setPrice, priceOf, PRICING_SOURCE } from './pricing.js';
 
 const state = {
   conn: loadConnection(),
@@ -33,7 +37,14 @@ const state = {
   running: false,
   fontSize: localStorage.getItem('mt.font') || 'medium',
   showSource: localStorage.getItem('mt.source') !== 'off',
-  draftInterval: Number(localStorage.getItem('mt.draftInterval') ?? 1200)
+  draftInterval: Number(localStorage.getItem('mt.draftInterval') ?? 1200),
+  // Miễn phí là mặc định: mở web lên là chạy được, không tốn đồng nào.
+  engine: localStorage.getItem('mt.engine') || 'free',
+  model: localStorage.getItem('mt.model') || null,
+  models: [],
+  // Đồng hồ sống lâu hơn phiên chạy: bấm ◈ dịch lại sau khi đã dừng vẫn phải
+  // được tính tiền, nếu không con số chi phí sẽ thấp hơn thực tế.
+  stats: { requests: 0, tokensIn: 0, tokensOut: 0, freeRequests: 0 }
 };
 
 // ------------------------------------------------------------------ khởi tạo
@@ -57,6 +68,7 @@ function init() {
   }
 
   bindEvents();
+  ui.setRegenHandler(regenerateLine);
   ui.setStatus('idle');
 
   // Tải nền: chưa xong thì chỉ mất phần gợi nghĩa tức thì, không chặn gì.
@@ -64,18 +76,41 @@ function init() {
     const n = dictionary.size();
     if (n) ui.el.dictNote.textContent = `Từ điển: ${n.toLocaleString('vi-VN')} từ, tra tức thì không tốn API.`;
   });
+
+  // Hỏi script xem nó đang dùng model nào, để đồng hồ chi phí có đơn giá ngay
+  // mà người dùng không phải mở bảng model.
+  if (state.conn && !state.model) {
+    ping(state.conn)
+      .then((res) => {
+        if (!res.model || state.model) return;
+        state.model = res.model;
+        ui.setEngine(state.engine, state.model);
+      })
+      .catch(() => {
+        // Không hỏi được thì thôi, người dùng vẫn chọn tay được trong Cài đặt.
+      });
+  }
 }
 
 function applyPreferences() {
   document.documentElement.dataset.font = state.fontSize;
   document.body.dataset.source = state.showSource ? 'on' : 'off';
 
-  const labels = { small: 'Nhỏ', medium: 'Vừa', large: 'Lớn' };
+  const labels = { small: 'Nhỏ', medium: 'Vừa', large: 'Lớn', xlarge: 'Rất lớn' };
   ui.el.btnFont.textContent = 'Cỡ chữ: ' + labels[state.fontSize];
   ui.el.btnSource.setAttribute('aria-pressed', String(state.showSource));
   ui.el.btnSource.textContent = state.showSource ? 'Hiện tiếng Anh' : 'Ẩn tiếng Anh';
 
   ui.el.inpDraft.value = String(state.draftInterval);
+  ui.setEngine(state.engine, state.model);
+  renderDraftSetting();
+}
+
+function setEngine(engine) {
+  state.engine = engine;
+  localStorage.setItem('mt.engine', engine);
+  state.queue?.setEngine(engine);
+  ui.setEngine(engine, state.model);
   renderDraftSetting();
 }
 
@@ -83,6 +118,7 @@ function applyPreferences() {
 // nhưng càng tốn tiền, và người dùng là người trả tiền cho API.
 function renderDraftSetting() {
   const ms = state.draftInterval;
+  const free = state.engine === 'free';
 
   if (ms === 0) {
     ui.el.draftLabel.textContent = 'tắt';
@@ -92,6 +128,13 @@ function renderDraftSetting() {
   }
 
   ui.el.draftLabel.textContent = 'mỗi ' + (ms / 1000).toFixed(1).replace('.', ',') + ' giây';
+
+  if (free) {
+    ui.el.draftNote.textContent = ms <= 800
+      ? 'Rất mượt. Chế độ miễn phí không tính tiền, nhưng nhịp dày ăn nhiều hạn mức Apps Script mỗi ngày.'
+      : 'Chế độ miễn phí không tính tiền theo nhịp này.';
+    return;
+  }
 
   if (ms <= 800) {
     ui.el.draftNote.textContent = 'Rất mượt, gần như phiên dịch thật. Tốn API nhất — dễ chạm hạn mức gói miễn phí.';
@@ -114,6 +157,12 @@ function bindEvents() {
   ui.el.btnCopyCode.addEventListener('click', copyGasCode);
   ui.el.btnForget.addEventListener('click', forgetConnection);
 
+  ui.el.btnEngineFree.addEventListener('click', () => setEngine('free'));
+  ui.el.btnEngineGemini.addEventListener('click', () => setEngine('gemini'));
+
+  ui.el.btnRefreshModels.addEventListener('click', refreshModels);
+  ui.el.btnEditPrices.addEventListener('click', editPrice);
+
   ui.el.settings.addEventListener('close', () => {
     const url = ui.el.inpUrl.value.trim();
     const token = ui.el.inpToken.value.trim();
@@ -134,7 +183,7 @@ function bindEvents() {
   });
 
   ui.el.btnFont.addEventListener('click', () => {
-    const order = ['small', 'medium', 'large'];
+    const order = ['small', 'medium', 'large', 'xlarge'];
     state.fontSize = order[(order.indexOf(state.fontSize) + 1) % order.length];
     localStorage.setItem('mt.font', state.fontSize);
     applyPreferences();
@@ -153,6 +202,7 @@ function bindEvents() {
     if (ui.lines.length && !confirm('Xoá toàn bộ nội dung đã dịch?')) return;
     ui.clearLines();
     state.queue?.reset();
+    ui.updateUsage(state.stats, state.model);
   });
 
   // Người dùng cuộn lên để đọc lại thì ngừng tự cuộn, tránh bị giật xuống.
@@ -200,25 +250,29 @@ async function start(source) {
 
   state.queue = new TranslationQueue(state.conn, {
     draftIntervalMs: state.draftInterval,
+    engine: state.engine,
+    model: state.model,
+    stats: state.stats,
     onPending: ({ source: src }) => {
       ui.setInterim('');
-      // Hiện dòng ngay với gợi nghĩa từ điển, rồi thay bằng bản dịch AI khi về.
+      // Hiện dòng ngay với gợi nghĩa từ điển, rồi thay bằng bản dịch khi về.
       const gloss = dictionary.glossSentence(src);
       return ui.addLine({
         source: src,
         translation: gloss && gloss.coverage >= 0.5 ? gloss.text : '',
+        engine: state.engine,
         pending: true
       });
     },
-    onResult: ({ ticket, source: src, translation, stats }) => {
+    onResult: ({ ticket, source: src, translation, engine, stats }) => {
       ui.setInterim('');
-      if (ticket) ui.updateLine(ticket, { translation });
-      else ui.addLine({ source: src, translation });
-      ui.updateUsage(stats);
+      if (ticket) ui.updateLine(ticket, { translation, engine });
+      else ui.addLine({ source: src, translation, engine });
+      ui.updateUsage(stats, state.model);
     },
     onDraft: ({ translation, stats }) => {
       ui.setDraft(translation);
-      ui.updateUsage(stats);
+      ui.updateUsage(stats, state.model);
     },
     onError: (err, text, ticket) => {
       handleTranslationError(err, text, ticket);
@@ -236,15 +290,22 @@ async function start(source) {
 
   if (supportsSpeechRecognition && source === 'mic') {
     startRecognizer();
-    ui.setStatus('listening', 'Đang nghe từ micro. Nói tiếng Anh để xem bản dịch.');
+    ui.setStatus(
+      'listening',
+      state.engine === 'free'
+        ? 'Đang nghe từ micro, dịch miễn phí bằng Google Translate. Bấm ◈ trên câu nào cần Gemini dịch lại.'
+        : 'Đang nghe từ micro, dịch bằng Gemini. Mỗi câu tính tiền theo token.'
+    );
   } else {
     // Tab audio và trình duyệt không có Web Speech API đều đi đường gửi audio.
+    // Google Translate không nhận dạng được giọng nói, nên đường này bắt buộc
+    // dùng Gemini — phải nói rõ vì người dùng đang chọn chế độ miễn phí.
     startRecorder();
     ui.setStatus(
       'listening',
       source === 'tab'
-        ? 'Đang nghe âm thanh tab. Bản dịch xuất hiện sau mỗi vài giây.'
-        : 'Trình duyệt này không có nhận dạng giọng nói sẵn — đang gửi âm thanh đi dịch, trễ hơn một chút.'
+        ? 'Đang nghe âm thanh tab. Đường này bắt buộc dùng Gemini và có tính tiền — Google Translate không nhận dạng được giọng nói.'
+        : 'Trình duyệt này không có nhận dạng giọng nói sẵn — đang gửi âm thanh cho Gemini, có tính tiền và trễ hơn một chút.'
     );
   }
 }
@@ -284,7 +345,8 @@ function startRecorder() {
           state.conn,
           base64,
           mimeType.split(';')[0],
-          state.queue.context.slice(-3)
+          state.queue.context.slice(-3),
+          state.model
         );
 
         if (!res.translation?.trim()) return; // đoạn im lặng
@@ -292,12 +354,14 @@ function startRecorder() {
         state.queue.context.push(res.translation);
         if (state.queue.context.length > 6) state.queue.context.shift();
 
-        state.queue.stats.requests += 1;
-        state.queue.stats.tokensIn += res.usage?.in || 0;
-        state.queue.stats.tokensOut += res.usage?.out || 0;
+        state.stats.requests += 1;
+        state.stats.tokensIn += res.usage?.in || 0;
+        state.stats.tokensOut += res.usage?.out || 0;
 
-        ui.addLine({ source: res.source || '(âm thanh)', translation: res.translation });
-        ui.updateUsage(state.queue.stats);
+        // Nhận dạng âm thanh chỉ Gemini làm được, nên dòng này luôn là Gemini
+        // dù người dùng đang để chế độ miễn phí.
+        ui.addLine({ source: res.source || '(âm thanh)', translation: res.translation, engine: 'gemini' });
+        ui.updateUsage(state.stats, state.model);
       } catch (err) {
         handleTranslationError(err, '(đoạn âm thanh)');
       } finally {
@@ -329,6 +393,145 @@ function stop() {
   ui.setStatus('idle', 'Đã dừng. Nội dung đã dịch vẫn được giữ lại bên dưới.');
 }
 
+// -------------------------------------------------------- dịch lại bằng Gemini
+
+/**
+ * Người dùng bấm ◈ trên một dòng: gọi Gemini dịch lại câu đó.
+ *
+ * Đây là điểm chính của chế độ miễn phí — cả cuộc họp chạy không tốn tiền,
+ * chỉ trả tiền cho đúng những câu người dùng thấy cần chính xác hơn.
+ */
+async function regenerateLine(id) {
+  const line = ui.getLine(id);
+  if (!line) return;
+
+  if (!state.conn) {
+    ui.showNotice('Cần kết nối Apps Script để dùng Gemini.', {
+      kind: 'warn',
+      actionLabel: 'Mở cài đặt',
+      onAction: openSettings
+    });
+    return;
+  }
+
+  ui.setRegenBusy(id, true);
+
+  try {
+    // Lấy các câu quanh nó làm ngữ cảnh — đây chính là thứ Google Translate
+    // không có, và là lý do bản Gemini đọc mượt hơn.
+    const idx = ui.lines.findIndex((l) => l.id === id);
+    const context = ui.lines.slice(Math.max(0, idx - 3), idx).map((l) => l.translation).filter(Boolean);
+
+    const res = await translate(state.conn, line.source, context, state.model);
+
+    ui.updateLine(id, {
+      translation: res.translation,
+      engine: 'gemini',
+      upgraded: true
+    });
+
+    state.stats.requests += 1;
+    state.stats.tokensIn += res.usage?.in || 0;
+    state.stats.tokensOut += res.usage?.out || 0;
+    ui.updateUsage(state.stats, state.model);
+  } catch (err) {
+    const msg = err instanceof GasError ? err.message : 'Không dịch lại được câu này.';
+    ui.showNotice(msg, {
+      kind: err.code === 'RATE_LIMIT' ? 'warn' : 'error',
+      ...(err.code === 'NO_API_KEY' || err.code === 'UNAUTHORIZED'
+        ? { actionLabel: 'Mở cài đặt', onAction: openSettings }
+        : {})
+    });
+  } finally {
+    ui.setRegenBusy(id, false);
+  }
+}
+
+// --------------------------------------------------------------- bảng model
+
+/**
+ * Tải danh sách model mà API key thực sự dùng được.
+ *
+ * Nút này KHÔNG tải giá — Google không có API giá công khai. Nó làm mới danh
+ * sách model, còn đơn giá lấy từ bảng nhúng trong pricing.js.
+ */
+async function refreshModels() {
+  if (!state.conn) {
+    ui.setModelsResult('fail', 'Cần kết nối Apps Script trước.');
+    return;
+  }
+
+  ui.el.btnRefreshModels.disabled = true;
+  ui.setModelsResult('', 'Đang tải...');
+
+  try {
+    const res = await listModels(state.conn);
+    state.models = res.models || [];
+
+    if (!state.model && res.current) state.model = res.current;
+
+    const known = state.models.filter((m) => priceOf(m.name)).length;
+    ui.renderModels(state.models, state.model, pickModel);
+    ui.setModelsResult(
+      'ok',
+      `${state.models.length} model · ${known} có sẵn đơn giá`
+    );
+    ui.setEngine(state.engine, state.model);
+  } catch (err) {
+    ui.setModelsResult('fail', err.message);
+  } finally {
+    ui.el.btnRefreshModels.disabled = false;
+  }
+}
+
+async function pickModel(name) {
+  state.model = name;
+  localStorage.setItem('mt.model', name);
+  state.queue?.setModel(name);
+  ui.setEngine(state.engine, name);
+  ui.updateUsage(state.stats, name);
+
+  // Lưu cả về script để đường tab audio và lần mở sau dùng đúng model này.
+  try {
+    await saveModel(state.conn, name);
+  } catch {
+    // Không lưu được thì model vẫn áp dụng cho phiên này qua tham số request.
+  }
+}
+
+/** Bảng giá nhúng sẽ cũ dần — cho người dùng tự sửa khi Google đổi giá. */
+function editPrice() {
+  if (!state.model) {
+    ui.setModelsResult('fail', 'Chọn một model trước khi sửa giá.');
+    return;
+  }
+
+  const current = priceOf(state.model);
+  const inp = prompt(
+    `Đơn giá token VÀO của ${state.model}\n(USD trên 1 triệu token — xem ${PRICING_SOURCE})`,
+    String(current?.in ?? '')
+  );
+  if (inp === null) return;
+
+  const outp = prompt(
+    `Đơn giá token RA của ${state.model}\n(USD trên 1 triệu token)`,
+    String(current?.out ?? '')
+  );
+  if (outp === null) return;
+
+  const a = Number(inp);
+  const b = Number(outp);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || a < 0 || b < 0) {
+    ui.setModelsResult('fail', 'Đơn giá phải là số không âm.');
+    return;
+  }
+
+  setPrice(state.model, a, b);
+  ui.renderModels(state.models, state.model, pickModel);
+  ui.updateUsage(state.stats, state.model);
+  ui.setModelsResult('ok', 'Đã lưu đơn giá cho ' + state.model);
+}
+
 // ------------------------------------------------------------------ lỗi
 
 function handleTranslationError(err, text, ticket) {
@@ -349,12 +552,25 @@ function handleTranslationError(err, text, ticket) {
     return;
   }
 
+  // Hết hạn mức Google Translate: Gemini vẫn dùng được nên mời chuyển sang.
+  if (code === 'FREE_LIMIT') {
+    ui.showNotice(err.message, {
+      kind: 'warn',
+      actionLabel: 'Chuyển sang Gemini',
+      onAction: () => {
+        setEngine('gemini');
+        ui.hideNotice();
+      }
+    });
+    return;
+  }
+
   ui.showNotice(err.message, { kind: 'error' });
 
   // Giữ lại gợi nghĩa từ điển nếu có — vẫn hơn là mất trắng câu đó.
   const gloss = dictionary.glossSentence(text);
   const fallback = gloss && gloss.coverage >= 0.5
-    ? gloss.text + '  ⚠ (tra từ điển, AI không dịch được)'
+    ? gloss.text + '  ⚠ (tra từ điển, máy dịch không trả kết quả)'
     : '⚠ Không dịch được đoạn này';
 
   if (ticket) ui.updateLine(ticket, { translation: fallback, failed: true });
@@ -366,6 +582,8 @@ function handleTranslationError(err, text, ticket) {
 function openSettings() {
   ui.el.testResult.textContent = '';
   ui.el.testResult.removeAttribute('data-state');
+  ui.setModelsResult('', '');
+  if (state.models.length) ui.renderModels(state.models, state.model, pickModel);
   ui.el.settings.showModal();
 }
 
@@ -392,9 +610,13 @@ async function testConnection() {
       saveConnection(url, token);
       state.conn = loadConnection();
       state.queue?.setConnection(state.conn);
+      if (!state.model && res.model) {
+        state.model = res.model;
+        ui.setEngine(state.engine, state.model);
+      }
       ui.hideNotice();
     } else {
-      setTestResult('fail', 'Script chạy được nhưng chưa có API key. Chạy setKey("AIza...") trong editor.');
+      setTestResult('fail', 'Script chạy được nhưng chưa có API key. Dán key vào Script Properties (GEMINI_API_KEY) rồi chạy setup().');
     }
   } catch (err) {
     setTestResult('fail', err.message);

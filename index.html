@@ -3,30 +3,45 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="color-scheme" content="light dark">
+<meta name="color-scheme" content="dark light">
 <title>Phiên dịch hội thoại — Anh sang Việt</title>
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-<header class="bar">
-  <div class="brand">
+<header class="deck">
+  <div class="deck-live">
     <span class="dot" id="statusDot"></span>
-    <strong>Phiên dịch hội thoại</strong>
+    <span id="statusLabel">Chưa chạy</span>
   </div>
-  <div class="bar-actions">
-    <span class="usage" id="usage" hidden>0 lượt</span>
+
+  <div class="meters" id="meters" hidden>
+    <div class="meter">
+      <span class="meter-k">Miễn phí</span>
+      <span class="meter-v" data-tone="free" id="meterFree">0</span>
+    </div>
+    <div class="meter">
+      <span class="meter-k">Gemini</span>
+      <span class="meter-v" data-tone="paid" id="meterPaid">0</span>
+    </div>
+    <div class="meter">
+      <span class="meter-k">Chi phí</span>
+      <span class="meter-v" data-tone="paid" id="meterCost">$0</span>
+    </div>
+  </div>
+
+  <div class="deck-actions">
     <button type="button" class="icon-btn" id="btnSettings" aria-label="Cài đặt">⚙</button>
   </div>
 </header>
 
 <main>
-  <section class="controls" id="controls">
+  <section class="launch" id="launch">
     <button type="button" class="primary" id="btnMic">
       <span class="ico">🎙</span>
       <span class="lbl">Nghe từ micro</span>
     </button>
-    <button type="button" class="primary" id="btnTab">
+    <button type="button" class="secondary" id="btnTab">
       <span class="ico">🖥</span>
       <span class="lbl">Nghe từ tab họp</span>
     </button>
@@ -36,7 +51,16 @@
     </button>
   </section>
 
-  <p class="hint" id="hint">Chọn nguồn âm thanh để bắt đầu. Bản dịch tiếng Việt sẽ hiện ngay bên dưới.</p>
+  <section class="engine">
+    <div class="engine-switch" role="group" aria-label="Máy dịch">
+      <button type="button" class="engine-opt" data-engine="free" id="btnEngineFree" aria-pressed="true">Miễn phí</button>
+      <button type="button" class="engine-opt" data-engine="gemini" id="btnEngineGemini" aria-pressed="false">Gemini</button>
+    </div>
+    <p class="engine-note" id="engineNote"></p>
+    <span class="engine-model" id="engineModel" hidden></span>
+  </section>
+
+  <p class="hint" id="hint">Chọn nguồn âm thanh để bắt đầu. Bản dịch tiếng Việt hiện ngay bên dưới.</p>
 
   <div class="notice" id="notice" hidden>
     <span id="noticeText"></span>
@@ -46,11 +70,17 @@
   <section class="transcript" id="transcript" aria-live="polite">
     <div class="empty" id="empty">
       <p>Chưa có nội dung nào.</p>
-      <p class="sub">Nội dung nghe được sẽ được gửi tới Google Gemini để dịch.</p>
+      <p class="sub">
+        Chế độ miễn phí dịch bằng Google Translate trong Apps Script của bạn — không tốn API.
+        Câu nào cần chính xác hơn, bấm nút ◈ bên trái câu đó để Gemini dịch lại.
+      </p>
     </div>
   </section>
 
-  <div class="live" id="live" hidden></div>
+  <div class="live" id="live" hidden>
+    <div class="live-gutter"></div>
+    <div id="liveBody"></div>
+  </div>
 </main>
 
 <footer class="toolbar">
@@ -65,7 +95,7 @@
 <dialog id="settings">
   <form method="dialog" class="sheet">
     <header class="sheet-head">
-      <h2>Kết nối Apps Script</h2>
+      <h2>Cài đặt</h2>
       <button type="submit" class="icon-btn" aria-label="Đóng">✕</button>
     </header>
 
@@ -74,27 +104,6 @@
         API key Gemini nằm trong Apps Script thuộc tài khoản Google của bạn.
         Trang web này không nhận, không lưu và không gửi key đi đâu.
       </p>
-
-      <ol class="steps">
-        <li>
-          Lấy Gemini API key tại
-          <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
-        </li>
-        <li>
-          Tạo script mới tại
-          <a href="https://script.new" target="_blank" rel="noopener">script.new</a>
-        </li>
-        <li>
-          Dán toàn bộ nội dung file <code>gas/Code.gs</code> vào editor
-          <button type="button" class="link" id="btnCopyCode">Sao chép Code.gs</button>
-        </li>
-        <li>Dán key vào hàm <code>setup()</code> ở đầu file rồi bấm <strong>Run</strong></li>
-        <li>
-          <strong>Deploy → New deployment → Web app</strong><br>
-          Execute as: <code>Me</code> · Who has access: <code>Anyone</code>
-        </li>
-        <li>Chạy <code>showSetup()</code> rồi copy URL và token vào ô dưới đây</li>
-      </ol>
 
       <label class="field">
         <span>URL Web App</span>
@@ -107,10 +116,35 @@
       </label>
 
       <div class="test-row">
-        <button type="button" class="primary sm" id="btnTest">Kiểm tra kết nối</button>
+        <button type="button" class="primary" id="btnTest">Kiểm tra kết nối</button>
         <span class="test-result" id="testResult"></span>
       </div>
 
+      <!-- ------------------------------------------------------ bảng model -->
+      <div class="field">
+        <div class="models-head">
+          <h3>Model Gemini</h3>
+          <span class="price-stamp" id="priceStamp"></span>
+        </div>
+        <p class="field-note">
+          Chỉ áp dụng khi dịch bằng Gemini. Đơn giá tính trên 1 triệu token —
+          vào : nhập, ra : kết quả.
+        </p>
+
+        <div class="models-actions">
+          <button type="button" class="secondary" id="btnRefreshModels">Tải lại danh sách</button>
+          <button type="button" class="link" id="btnEditPrices">Sửa đơn giá</button>
+          <span class="test-result" id="modelsResult"></span>
+        </div>
+
+        <div class="model-list" id="modelList">
+          <p class="models-empty" id="modelsEmpty">
+            Bấm “Tải lại danh sách” để xem model mà API key của bạn dùng được.
+          </p>
+        </div>
+      </div>
+
+      <!-- --------------------------------------------------- dịch nháp -->
       <div class="field">
         <span>Dịch nháp khi đang nói — <strong id="draftLabel">mỗi 1,2 giây</strong></span>
         <input type="range" id="inpDraft" min="0" max="3000" step="200" value="1200">
@@ -118,13 +152,42 @@
         <p class="field-note" id="dictNote"></p>
       </div>
 
+      <!-- ----------------------------------------------------- hướng dẫn -->
+      <details class="warn">
+        <summary>Cách cài Apps Script</summary>
+        <ol class="steps">
+          <li>
+            Lấy Gemini API key tại
+            <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener">aistudio.google.com/apikey</a>
+            — chỉ cần nếu bạn muốn dùng Gemini. Chế độ miễn phí không cần key.
+          </li>
+          <li>Tạo script mới tại <a href="https://script.new" target="_blank" rel="noopener">script.new</a></li>
+          <li>
+            Dán toàn bộ nội dung file <code>gas/Code.gs</code> vào editor
+            <button type="button" class="link" id="btnCopyCode">Sao chép Code.gs</button>
+          </li>
+          <li>
+            Mở <strong>⚙ Project Settings → Script Properties → Add script property</strong>,
+            đặt tên <code>GEMINI_API_KEY</code> và dán key vào ô Value, bấm <strong>Save</strong>
+          </li>
+          <li>Quay lại <strong>Editor</strong>, chọn hàm <code>setup</code> rồi bấm <strong>Run</strong></li>
+          <li>
+            <strong>Deploy → New deployment → Web app</strong><br>
+            Execute as: <code>Me</code> · Who has access: <code>Anyone</code>
+          </li>
+          <li>Chạy <code>showSetup()</code> rồi copy URL và token vào ô trên</li>
+        </ol>
+      </details>
+
       <details class="warn">
         <summary>Cần biết trước khi dùng</summary>
         <ul>
-          <li><strong>Nội dung cuộc họp được gửi tới Google Gemini</strong> để nhận dạng và dịch. Không dùng cho họp có thông tin mật.</li>
+          <li><strong>Nội dung cuộc họp được gửi tới Google</strong> — chế độ miễn phí qua Google Translate, chế độ Gemini qua Gemini API. Không dùng cho họp có thông tin mật.</li>
+          <li><strong>Chế độ micro gửi âm thanh tới dịch vụ nhận dạng của Google</strong> qua Web Speech API của Chrome, không đi qua Apps Script của bạn.</li>
+          <li>Chế độ miễn phí dùng hạn mức Google Translate của Apps Script, khoảng 5.000 lượt/ngày với tài khoản Gmail thường.</li>
+          <li>Mỗi lượt gọi Gemini phát sinh chi phí theo <a href="https://ai.google.dev/pricing" target="_blank" rel="noopener">biểu giá Gemini</a>. Nên đặt hạn mức chi tiêu trong Google Cloud Console.</li>
+          <li>Đơn giá trong bảng model là số chép tay, không phải giá lấy trực tiếp từ Google — Google không có API giá. Kiểm tra lại tại trang biểu giá trước khi tin con số ước tính.</li>
           <li>Token lưu trong bộ nhớ trình duyệt. Người dùng chung máy có thể đọc được. Nghi ngờ lộ thì chạy <code>rotateToken()</code>.</li>
-          <li>Mỗi câu là một lời gọi API và phát sinh chi phí theo biểu giá Gemini. Nên đặt hạn mức chi tiêu trong Google Cloud Console.</li>
-          <li>Gói miễn phí giới hạn theo phút — họp dài liên tục có thể bị tạm dừng.</li>
           <li>Chia sẻ âm thanh tab chỉ chạy trên Chrome/Edge máy tính, không chạy trên điện thoại.</li>
         </ul>
       </details>
